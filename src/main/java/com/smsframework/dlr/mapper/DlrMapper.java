@@ -2,6 +2,8 @@ package com.smsframework.dlr.mapper;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smsframework.dlr.billing.BillingEventView;
+import com.smsframework.dlr.billing.DlrBillingEvent;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.ProcessingStatus;
 import com.smsframework.dlr.dto.DlrEventView;
@@ -96,6 +98,7 @@ public class DlrMapper {
                 s.getStatusUpdatedAt(),
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -107,6 +110,24 @@ public class DlrMapper {
                 e.getProcessingStatus() == null ? null : e.getProcessingStatus().name(),
                 e.getProcessingNote(), e.getRejectionReason(), e.getDuplicateOf(), e.getReceiverInstance(),
                 parse(e.getRawPayload()), e.getCreatedAt());
+    }
+
+    public BillingEventView toBillingView(DlrBillingEvent e) {
+        return new BillingEventView(e.getId(), e.getSource(), e.getBatchId(), e.getBatchIndex(), e.getMessageId(),
+                e.getBillingMessageId(), e.getPartNumber(), e.getTransactionType(), e.getProduct(), e.getUnits(),
+                plain(e.getSalePrice()), e.getCurrency(), plain(e.getSurcharge()), plain(e.getTotalAmount()),
+                e.getProcessingStatus(),
+                e.getProcessingNote(), e.getRejectionReason(), e.getDuplicateOf(), parse(e.getRawEvent()),
+                e.getCreatedAt());
+    }
+
+    /** NUMERIC(18,6) comes back as 1.000000; return 1 instead. */
+    private static java.math.BigDecimal plain(java.math.BigDecimal d) {
+        if (d == null) {
+            return null;
+        }
+        java.math.BigDecimal s = d.stripTrailingZeros();
+        return s.scale() < 0 ? s.setScale(0) : s;
     }
 
     private JsonNode parse(String json) {

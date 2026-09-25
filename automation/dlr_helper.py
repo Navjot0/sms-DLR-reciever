@@ -1,6 +1,8 @@
 """
 DLR verification helpers for SMS automation.
 
+Covers both status DLRs and billing DLRs (billing is correlated to the status DLR by message_id).
+
 The DLR Receiver is the source of truth. A test passes only when the expected DLR has been
 received, correlated by message_id, persisted, and read back from the receiver's database
 through its query API. The HTTP status of the DLR callback itself is deliberately ignored.
@@ -15,6 +17,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Iterable
 
 import requests
@@ -89,26 +92,31 @@ def wait_for_dlr(message_id: str, expected_status: str, timeout: float = 120, po
         f"last state: {last}{detail}")
 
 
-def verify_dlrs(message_ids: Iterable[str], expected_status: str | None = None,
+def verify_dlrs(message_ids: Iterable[str], expected_status: str | None = None, require_billing: bool = False,
                 base_url: str = DLR_BASE_URL) -> dict:
     """One call to POST /api/v1/dlr/verify."""
     body: dict = {"message_ids": list(message_ids)}
     if expected_status:
         body["expected_status"] = expected_status.upper()
+    if require_billing:
+        body["require_billing"] = True
     response = _session.post(f"{base_url}/api/v1/dlr/verify", json=body, timeout=60)
     response.raise_for_status()
     return response.json()
 
 
 def wait_for_dlrs(message_ids: Iterable[str], expected_status: str, timeout: float = 300, poll_interval: float = 3,
-                  base_url: str = DLR_BASE_URL) -> dict:
-    """Bulk version of wait_for_dlr: waits until every message has ``expected_status``."""
+                  require_billing: bool = False, base_url: str = DLR_BASE_URL) -> dict:
+    """
+    Bulk version of wait_for_dlr: waits until every message has ``expected_status``
+    (and, with ``require_billing=True``, a billing DLR as well).
+    """
     ids = list(message_ids)
     expected_status = expected_status.upper()
     deadline = time.monotonic() + timeout
     result: dict = {}
     while time.monotonic() < deadline:
-        result = verify_dlrs(ids, expected_status, base_url=base_url)
+        result = verify_dlrs(ids, expected_status, require_billing=require_billing, base_url=base_url)
         if result.get("all_matched"):
             return result
         wrong_final = [r for r in result["results"]
@@ -118,10 +126,46 @@ def wait_for_dlrs(message_ids: Iterable[str], expected_status: str, timeout: flo
                 f"{len(wrong_final)} message(s) reached a different final status than {expected_status}: "
                 f"{wrong_final[:10]}")
         time.sleep(poll_interval)
-    pending = [r["message_id"] for r in result.get("results", []) if r.get("status") != expected_status]
+    pending = [r["message_id"] for r in result.get("results", []) if not r.get("matched")]
     raise DlrVerificationError(
-        f"{len(pending)}/{len(ids)} message(s) did not reach {expected_status} within {timeout}s "
-        f"(received={result.get('received')}, missing={result.get('missing')}); first pending: {pending[:10]}")
+        f"{len(pending)}/{len(ids)} message(s) did not reach {expected_status}"
+        f"{' with billing' if require_billing else ''} within {timeout}s "
+        f"(received={result.get('received')}, missing={result.get('missing')}, "
+        f"billing_missing={result.get('billing_missing')}); first pending: {pending[:10]}")
+
+
+def get_billing(message_id: str, base_url: str = DLR_BASE_URL) -> dict:
+    """Billing summary + billing events for a message (GET /api/v1/dlr/{id}/billing)."""
+    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/billing", timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def wait_for_billing(message_id: str, expected_units: int | None = None, expected_amount: float | str | None = None,
+                     expected_currency: str | None = None, timeout: float = 120, poll_interval: float = 2,
+                     base_url: str = DLR_BASE_URL) -> dict:
+    """
+    Poll until a billing DLR for ``message_id`` is persisted, then check the billed totals.
+
+    ``expected_units`` / ``expected_amount`` are compared with the NET values (debits minus refunds/credits)
+    summed over all parts ("<message_id>:1", "<message_id>:2", ...). Keeps polling while the totals are still
+    below the expected values, because the parts of a multipart SMS may be billed in separate callbacks.
+    Returns the billing summary.
+    """
+    deadline = time.monotonic() + timeout
+    summary: dict = {}
+    while time.monotonic() < deadline:
+        summary = get_billing(message_id, base_url=base_url)["billing"]
+        if summary.get("billed"):
+            units_ok = expected_units is None or summary.get("units") == expected_units
+            amount_ok = expected_amount is None or Decimal(str(summary.get("total_amount"))) == Decimal(str(expected_amount))
+            currency_ok = expected_currency is None or summary.get("currency") == expected_currency.upper()
+            if units_ok and amount_ok and currency_ok:
+                return summary
+        time.sleep(poll_interval)
+    raise DlrVerificationError(
+        f"Billing DLR for message_id={message_id} not received with units={expected_units}, "
+        f"amount={expected_amount}, currency={expected_currency} within {timeout}s; last billing: {summary}")
 
 
 # --------------------------------------------------------------------------------------
@@ -161,6 +205,20 @@ def send_webengage_dlr(message_id: str, status: str = "sms_sent", to_number: str
                "status": status, "statusCode": status_code, "smsCount": sms_count}
     response = _session.post(f"{base_url}/api/v1/dlr/receive", json=payload,
                              headers={"X-DLR-Source": "WEBENGAGE", **(headers or {})}, timeout=10)
+    return SimulatedDlr(message_id, response.status_code)
+
+
+def send_billing_dlr(message_id: str, parts: int = 1, amount_per_part: str = "1", currency: str = "INR",
+                     transaction_type: str = "debit", product: str = "SMS Transactional",
+                     base_url: str = DLR_BASE_URL, headers: dict | None = None) -> SimulatedDlr:
+    """Simulates the gateway's billing DLR: one event per part, message_id "<id>:<part>"."""
+    events = [{
+        "transaction_type": transaction_type, "message_id": f"{message_id}:{part}", "product": product,
+        "units": 1, "sale_price": float(amount_per_part), "currency": currency, "surcharge": 0,
+        "total_amount": float(amount_per_part),
+    } for part in range(1, parts + 1)]
+    response = _session.post(f"{base_url}/api/v1/dlr/receive", json={"event_type": "billing", "events": events},
+                             headers={"X-DLR-Source": "DEFAULT_SMS", **(headers or {})}, timeout=10)
     return SimulatedDlr(message_id, response.status_code)
 
 

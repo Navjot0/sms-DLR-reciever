@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Volume + correlation: 1, 100, 1,000 and 10,000 DLRs sent concurrently over HTTP, mixing providers,
- * statuses, status progressions and duplicates. Every message must end with exactly the expected
+ * statuses, status progressions, duplicates and multipart billing DLRs. Every message must end with exactly the expected
  * status, mobile and correlation id: no cross-talk between messages.
  *
  * Tagged "bulk" (run everything with `mvn verify`; skip with `mvn verify -Pfast`).
@@ -57,6 +57,7 @@ class DlrBulkIntegrationTest extends AbstractIntegrationTest {
                     if (i % 10 == 0) {
                         calls.add(new String[]{"DEFAULT_SMS", body});
                     }
+                    calls.add(new String[]{"DEFAULT_SMS", TestPayloads.billing(id, 1 + i % 3, "debit", "0.25")});
                     expected.put(id, new Expectation(id, "DELIVERED", mobile, corr, "DEFAULT_SMS"));
                 }
                 case 1 -> { // default SMS failed
@@ -111,6 +112,15 @@ class DlrBulkIntegrationTest extends AbstractIntegrationTest {
             Expectation e = expected.get(r.get("message_id").asText());
             assertThat(r.get("status").asText()).as(e.messageId()).isEqualTo(e.status());
             assertThat(r.get("source").asText()).as(e.messageId()).isEqualTo(e.source());
+            int index = Integer.parseInt(e.messageId().substring(e.messageId().lastIndexOf('-') + 1));
+            boolean shouldBeBilled = index % 4 == 0;
+            assertThat(r.get("billed").asBoolean()).as(e.messageId() + " billed").isEqualTo(shouldBeBilled);
+            if (shouldBeBilled) {
+                // parts = 1 + index % 3, 0.25 per part: billing must land on exactly this message
+                assertThat(r.get("billed_units").asInt()).as(e.messageId()).isEqualTo(1 + index % 3);
+                assertThat(r.get("billed_amount").decimalValue()).as(e.messageId())
+                        .isEqualByComparingTo(new java.math.BigDecimal("0.25").multiply(java.math.BigDecimal.valueOf(1 + index % 3)));
+            }
         }
 
         // Verify correlation straight from the database: every row carries its own mobile / correlation_id

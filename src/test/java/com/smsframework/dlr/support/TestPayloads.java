@@ -51,4 +51,36 @@ public final class TestPayloads {
                 {"version":"1.0","messageId":"%s","toNumber":"919014305913","status":"%s","statusCode":"%s","smsCount":"3"}"""
                 .formatted(messageId, status, statusCode);
     }
+
+    public static final String BILLING_EXAMPLE = """
+            {
+              "event_type": "billing",
+              "events": [
+                {
+                  "transaction_type": "debit",
+                  "message_id": "9b1b0309-4d49-48be-b2c1-0283892ded9e:1",
+                  "product": "SMS Transactional",
+                  "units": 1,
+                  "sale_price": 1,
+                  "currency": "INR",
+                  "surcharge": 0,
+                  "total_amount": 1
+                }
+              ]
+            }""";
+
+    /** Billing callback with one debit event per part: "<messageId>:1" .. "<messageId>:<parts>". */
+    public static String billing(String messageId, int parts, String transactionType, String amountPerPart) {
+        StringBuilder events = new StringBuilder();
+        for (int p = 1; p <= parts; p++) {
+            if (p > 1) {
+                events.append(',');
+            }
+            events.append("""
+                    {"transaction_type":"%s","message_id":"%s:%d","product":"SMS Transactional","units":1,
+                    "sale_price":%s,"currency":"INR","surcharge":0,"total_amount":%s}"""
+                    .formatted(transactionType, messageId, p, amountPerPart, amountPerPart));
+        }
+        return "{\"event_type\":\"billing\",\"events\":[" + events + "]}";
+    }
 }

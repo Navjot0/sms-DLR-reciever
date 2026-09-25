@@ -1,6 +1,10 @@
 package com.smsframework.dlr.unit;
 
 import com.smsframework.dlr.adapter.DlrAdapterRegistry;
+import com.smsframework.dlr.billing.BillingProcessingService;
+import com.smsframework.dlr.billing.DefaultBillingDlrAdapter;
+import com.smsframework.dlr.billing.DlrBillingEvent;
+import com.smsframework.dlr.billing.DlrBillingRepository;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.ProcessingStatus;
 import com.smsframework.dlr.entity.DlrEvent;
@@ -58,9 +62,67 @@ class DlrProcessingServiceTest {
         DlrAdapterRegistry registry = new DlrAdapterRegistry(List.of(
                 AdapterTestSupport.defaultAdapter(), AdapterTestSupport.webEngageAdapter()));
         meters = new SimpleMeterRegistry();
+        DlrMetrics metrics = new DlrMetrics(meters, registry);
+        billingRepository = mock(DlrBillingRepository.class);
+        when(billingRepository.insert(any())).thenReturn(500L);
+        BillingProcessingService billing = new BillingProcessingService(billingRepository, tx, metrics, props);
         service = new DlrProcessingService(registry, new SourceResolver(props), new DedupKeyGenerator(props),
                 new DlrStateMachine(props), events, statuses, new DlrMapper(AdapterTestSupport.MAPPER, props),
-                new DlrMetrics(meters, registry), tx, AdapterTestSupport.MAPPER, props);
+                metrics, tx, AdapterTestSupport.MAPPER, props,
+                List.of(new DefaultBillingDlrAdapter(AdapterTestSupport.MAPPER, AdapterTestSupport.VALIDATOR, props)),
+                billing);
+    }
+
+    private DlrBillingRepository billingRepository;
+
+    @Test
+    void billingCallbackIsRoutedToBillingAndNotToStatusAdapters() {
+        when(billingRepository.insertIfAbsent(any())).thenReturn(Optional.of(7L));
+
+        ProcessingResult r = service.process("DEFAULT_SMS", TestPayloads.BILLING_EXAMPLE);
+
+        assertThat(r.isBilling()).isTrue();
+        assertThat(r.billing().processingStatus()).isEqualTo("APPLIED");
+        assertThat(r.billing().events().get(0).messageId()).isEqualTo("9b1b0309-4d49-48be-b2c1-0283892ded9e");
+        assertThat(r.billing().events().get(0).billingMessageId()).isEqualTo("9b1b0309-4d49-48be-b2c1-0283892ded9e:1");
+        verify(events, never()).insertIfAbsent(any());
+        assertThat(count("dlr.billing.applied")).isEqualTo(1);
+        assertThat(count("dlr.billing.units")).isEqualTo(1);
+    }
+
+    @Test
+    void billingWithoutSourceHeaderUsesDefaultSource() {
+        when(billingRepository.insertIfAbsent(any())).thenReturn(Optional.of(7L));
+        assertThat(service.process(null, TestPayloads.BILLING_EXAMPLE).billing().source()).isEqualTo("DEFAULT_SMS");
+    }
+
+    @Test
+    void duplicateBillingEventIsStoredAsDuplicate() {
+        when(billingRepository.insertIfAbsent(any())).thenReturn(Optional.empty());
+        when(billingRepository.findPrimaryIdByDedupKey(any())).thenReturn(Optional.of(7L));
+
+        ProcessingResult r = service.process("DEFAULT_SMS", TestPayloads.BILLING_EXAMPLE);
+
+        assertThat(r.billing().processingStatus()).isEqualTo("DUPLICATE");
+        ArgumentCaptor<DlrBillingEvent> captor = ArgumentCaptor.forClass(DlrBillingEvent.class);
+        verify(billingRepository).insert(captor.capture());
+        assertThat(captor.getValue().getProcessingStatus()).isEqualTo("DUPLICATE");
+        assertThat(captor.getValue().getDuplicateOf()).isEqualTo(7L);
+    }
+
+    @Test
+    void billingWithoutEventsIsRejectedAsACallback() {
+        ProcessingResult r = service.process("DEFAULT_SMS", "{\"event_type\":\"billing\"}");
+        assertThat(r.isBilling()).isFalse();
+        assertThat(r.processingStatus()).isEqualTo(ProcessingStatus.REJECTED);
+        assertThat(r.rejectionReason()).isEqualTo("billing: events is missing");
+    }
+
+    @Test
+    void billingFromANonBillingSourceIsRejected() {
+        ProcessingResult r = service.process("WEBENGAGE", TestPayloads.BILLING_EXAMPLE);
+        assertThat(r.processingStatus()).isEqualTo(ProcessingStatus.REJECTED);
+        assertThat(r.rejectionReason()).startsWith("billing DLRs are not accepted from source WEBENGAGE");
     }
 
     private DlrMessageStatus state(String status) {

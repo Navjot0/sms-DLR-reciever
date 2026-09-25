@@ -16,7 +16,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Single generic callback endpoint for every provider.
+ * Single generic callback endpoint for every provider, for both status DLRs and billing DLRs
+ * ({"event_type":"billing","events":[...]}).
  *
  * The body is taken as a raw String on purpose: malformed JSON must still be persisted (as REJECTED
  * with its raw payload) instead of failing inside Jackson before our code runs.
@@ -44,10 +45,16 @@ public class DlrReceiverController {
     }
 
     @PostMapping(value = "/receive", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<DlrReceiveResponse> receive(@RequestBody(required = false) String body,
-                                                      HttpServletRequest request) {
+    public ResponseEntity<?> receive(@RequestBody(required = false) String body, HttpServletRequest request) {
         String explicitSource = sourceResolver.resolveExplicit(request);
         ProcessingResult r = processingService.process(explicitSource, body);
+
+        if (r.isBilling()) {
+            // Billing callback: per-event outcomes. 400 only when every event was rejected.
+            HttpStatus status = "REJECTED".equals(r.billing().processingStatus())
+                    ? HttpStatus.valueOf(properties.getApi().getRejectedHttpStatus()) : HttpStatus.OK;
+            return ResponseEntity.status(status).body(r.billing());
+        }
 
         DlrReceiveResponse response = new DlrReceiveResponse(r.eventId(), r.source(), r.messageId(),
                 r.processingStatus(), r.normalizedStatus() == null ? null : r.normalizedStatus().name(),

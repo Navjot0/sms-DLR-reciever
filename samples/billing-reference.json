@@ -1,0 +1,15 @@
+{
+  "event_type": "billing",
+  "events": [
+    {
+      "transaction_type": "debit",
+      "message_id": "9b1b0309-4d49-48be-b2c1-0283892ded9e:1",
+      "product": "SMS Transactional",
+      "units": 1,
+      "sale_price": 1,
+      "currency": "INR",
+      "surcharge": 0,
+      "total_amount": 1
+    }
+  ]
+}

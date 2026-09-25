@@ -1,5 +1,7 @@
 package com.smsframework.dlr.controller;
 
+import com.smsframework.dlr.billing.BillingDetailsResponse;
+import com.smsframework.dlr.billing.BillingEventView;
 import com.smsframework.dlr.domain.ProcessingStatus;
 import com.smsframework.dlr.dto.DlrEventView;
 import com.smsframework.dlr.dto.DlrStatusResponse;
@@ -44,6 +46,12 @@ public class DlrQueryController {
         return queryService.eventViews(messageId);
     }
 
+    /** Billing DLRs received for a message, with the billing summary (units / amount). */
+    @GetMapping("/{messageId}/billing")
+    public BillingDetailsResponse billing(@PathVariable String messageId) {
+        return queryService.billingDetails(messageId);
+    }
+
     /** Bulk verification for automation. */
     @PostMapping(value = "/verify", consumes = MediaType.APPLICATION_JSON_VALUE)
     public DlrVerificationResponse verify(@Valid @RequestBody DlrVerificationRequest request) {
@@ -67,5 +75,11 @@ public class DlrQueryController {
     @GetMapping("/events/rejected")
     public List<DlrEventView> rejected(@RequestParam(defaultValue = "50") int limit) {
         return queryService.recentByProcessingStatus(ProcessingStatus.REJECTED, limit);
+    }
+
+    /** Most recent rejected billing events (invalid entries inside billing callbacks). */
+    @GetMapping("/events/billing/rejected")
+    public List<BillingEventView> rejectedBilling(@RequestParam(defaultValue = "50") int limit) {
+        return queryService.recentBillingByProcessingStatus("REJECTED", limit);
     }
 }

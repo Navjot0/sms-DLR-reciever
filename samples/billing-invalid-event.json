@@ -1,0 +1,12 @@
+{
+  "event_type": "billing",
+  "events": [
+    {
+      "transaction_type": "debit",
+      "product": "SMS Transactional",
+      "units": 1,
+      "currency": "INR",
+      "total_amount": 1
+    }
+  ]
+}

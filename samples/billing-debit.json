@@ -1,0 +1,25 @@
+{
+  "event_type": "billing",
+  "events": [
+    {
+      "transaction_type": "debit",
+      "message_id": "2ee98174-eec2-46b1-9b3c-baa0853c9538:1",
+      "product": "SMS Transactional",
+      "units": 1,
+      "sale_price": 1,
+      "currency": "INR",
+      "surcharge": 0,
+      "total_amount": 1
+    },
+    {
+      "transaction_type": "debit",
+      "message_id": "2ee98174-eec2-46b1-9b3c-baa0853c9538:2",
+      "product": "SMS Transactional",
+      "units": 1,
+      "sale_price": 1,
+      "currency": "INR",
+      "surcharge": 0,
+      "total_amount": 1
+    }
+  ]
+}

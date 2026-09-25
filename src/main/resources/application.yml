@@ -112,6 +112,18 @@ dlr:
     rejected-http-status: 400
     max-events-page-size: 500
 
+  # Billing DLRs: {"event_type":"billing","events":[{"transaction_type":"debit","message_id":"<id>:1",...}]}
+  # received on the same /api/v1/dlr/receive endpoint and correlated to the status DLR by message_id.
+  billing:
+    enabled: ${DLR_BILLING_ENABLED:true}
+    event-type: billing
+    default-source: DEFAULT_SMS          # recorded when the callback carries no X-DLR-Source
+    sources: [DEFAULT_SMS]               # sources allowed to send billing DLRs
+    message-id-part-separator: ":"       # "<message_id>:<part>" -> message_id + part_number
+    debit-types: [debit]
+    credit-types: [credit, refund, reversal]
+    max-events-per-callback: 1000
+
   security:
     enabled: ${DLR_AUTH_ENABLED:false}
     enforce-in-profiles: [prod, production]

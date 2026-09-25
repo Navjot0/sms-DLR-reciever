@@ -2,6 +2,7 @@ package com.smsframework.dlr.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /** Response of POST /api/v1/dlr/verify (automation verification). */
@@ -16,7 +17,11 @@ public record DlrVerificationResponse(
         int sent,
         int unknown,
         int missing,
+        /* messages with at least one APPLIED billing DLR / without any */
+        int billed,
+        int billingMissing,
         String expectedStatus,
+        Boolean requireBilling,
         Integer matched,
         Boolean allMatched,
         List<Result> results) {
@@ -30,6 +35,10 @@ public record DlrVerificationResponse(
             String statusCode,
             String source,
             String correlationId,
+            boolean billed,
+            Integer billedUnits,
+            BigDecimal billedAmount,
+            String currency,
             Boolean matched) {
     }
 }

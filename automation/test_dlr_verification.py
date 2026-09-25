@@ -9,8 +9,9 @@ Note: the tests never assert on the callback's HTTP status. They verify the pers
 """
 import pytest
 
-from dlr_helper import (DlrVerificationError, get_dlr, new_message_id, send_default_sms_dlr,
-                        send_raw_dlr, send_webengage_dlr, wait_for_dlr, wait_for_dlrs)
+from dlr_helper import (DlrVerificationError, get_billing, get_dlr, new_message_id, send_billing_dlr,
+                        send_default_sms_dlr, send_raw_dlr, send_webengage_dlr, wait_for_billing, wait_for_dlr,
+                        wait_for_dlrs)
 
 
 def create_sms(mobile: str = "917973059161") -> str:
@@ -92,3 +93,51 @@ def test_bulk_campaign_all_delivered(count):
     assert result["total"] == count
     assert result["delivered"] == count
     assert result["missing"] == 0
+
+
+# ------------------------------------------------------------------ billing DLRs
+
+def test_delivered_sms_is_billed():
+    message_id = create_sms()
+    send_default_sms_dlr(message_id, status="DELIVRD")
+    send_billing_dlr(message_id, parts=1, amount_per_part="1")
+
+    dlr = wait_for_dlr(message_id, expected_status="DELIVERED", timeout=30, poll_interval=0.5)
+    billing = wait_for_billing(message_id, expected_units=1, expected_amount="1", expected_currency="INR",
+                               timeout=30, poll_interval=0.5)
+
+    assert billing["billed"] is True
+    assert dlr["billing"]["billed"] is True   # the status lookup carries the same billing summary
+
+
+def test_multipart_sms_billing_is_summed_and_duplicates_ignored():
+    message_id = create_sms()
+    send_default_sms_dlr(message_id, status="DELIVRD")
+    send_billing_dlr(message_id, parts=3, amount_per_part="0.20")
+    send_billing_dlr(message_id, parts=3, amount_per_part="0.20")   # gateway retry -> duplicates
+
+    billing = wait_for_billing(message_id, expected_units=3, expected_amount="0.60", timeout=30, poll_interval=0.5)
+    assert billing["parts"] == 3
+    statuses = [e["processing_status"] for e in get_billing(message_id)["events"]]
+    assert statuses.count("APPLIED") == 3 and statuses.count("DUPLICATE") == 3
+
+
+def test_bulk_delivered_and_billed():
+    message_ids = [create_sms() for _ in range(50)]
+    for mid in message_ids:
+        send_default_sms_dlr(mid, status="DELIVRD")
+        send_billing_dlr(mid)
+
+    result = wait_for_dlrs(message_ids, expected_status="DELIVERED", require_billing=True, timeout=60, poll_interval=1)
+    assert result["billed"] == 50
+    assert result["billing_missing"] == 0
+
+
+def test_missing_billing_is_reported():
+    message_id = create_sms()
+    send_default_sms_dlr(message_id, status="DELIVRD")   # delivered but never billed
+
+    with pytest.raises(DlrVerificationError, match="Billing DLR .* not received"):
+        wait_for_billing(message_id, timeout=2, poll_interval=0.5)
+    with pytest.raises(DlrVerificationError, match="billing_missing=1"):
+        wait_for_dlrs([message_id], expected_status="DELIVERED", require_billing=True, timeout=2, poll_interval=0.5)

@@ -1,6 +1,7 @@
 package com.smsframework.dlr.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.smsframework.dlr.billing.BillingSummary;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -34,7 +35,9 @@ public record DlrStatusResponse(
         List<DlrEventView> events,
         /* Only set when no valid DLR exists but REJECTED callbacks carried this message_id. */
         Integer rejectedEvents,
-        String lastRejectionReason) {
+        String lastRejectionReason,
+        /* Billing DLR summary. Always present once a status DLR is received; otherwise only when billed. */
+        BillingSummary billing) {
 
     public static DlrStatusResponse notReceived(String messageId) {
         return notReceived(messageId, null, null);
@@ -43,13 +46,20 @@ public record DlrStatusResponse(
     public static DlrStatusResponse notReceived(String messageId, Integer rejectedEvents, String lastRejectionReason) {
         return new DlrStatusResponse(messageId, null, false, null, "PENDING", null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                rejectedEvents, lastRejectionReason);
+                rejectedEvents, lastRejectionReason, null);
     }
 
     public DlrStatusResponse withEvents(List<DlrEventView> ev) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, ev,
-                rejectedEvents, lastRejectionReason);
+                rejectedEvents, lastRejectionReason, billing);
+    }
+
+    public DlrStatusResponse withBilling(BillingSummary b) {
+        return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
+                errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
+                requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
+                rejectedEvents, lastRejectionReason, b);
     }
 }

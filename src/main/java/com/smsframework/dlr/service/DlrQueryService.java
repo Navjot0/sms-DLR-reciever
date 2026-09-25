@@ -1,5 +1,10 @@
 package com.smsframework.dlr.service;
 
+import com.smsframework.dlr.billing.BillingDetailsResponse;
+import com.smsframework.dlr.billing.BillingEventView;
+import com.smsframework.dlr.billing.BillingProcessingService;
+import com.smsframework.dlr.billing.BillingSummary;
+import com.smsframework.dlr.billing.DlrBillingRepository;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.NormalizedStatus;
 import com.smsframework.dlr.domain.ProcessingStatus;
@@ -31,9 +36,14 @@ public class DlrQueryService {
     private final DlrEventRepository events;
     private final DlrMapper mapper;
     private final DlrProperties properties;
+    private final DlrBillingRepository billing;
+    private final BillingProcessingService billingService;
 
     public DlrQueryService(DlrMessageStatusRepository statuses, DlrEventRepository events, DlrMapper mapper,
-                           DlrProperties properties) {
+                           DlrProperties properties, DlrBillingRepository billing,
+                           BillingProcessingService billingService) {
+        this.billing = billing;
+        this.billingService = billingService;
         this.statuses = statuses;
         this.events = events;
         this.mapper = mapper;
@@ -41,12 +51,32 @@ public class DlrQueryService {
     }
 
     public DlrStatusResponse getStatus(String messageId, boolean includeEvents) {
+        BillingSummary summary = billingSummary(messageId);
         return statuses.findByMessageId(messageId)
                 .map(s -> {
-                    DlrStatusResponse r = mapper.toStatusResponse(s);
+                    DlrStatusResponse r = mapper.toStatusResponse(s).withBilling(summary);
                     return includeEvents ? r.withEvents(eventViews(messageId)) : r;
                 })
-                .orElseGet(() -> notReceived(messageId, includeEvents));
+                .orElseGet(() -> {
+                    DlrStatusResponse r = notReceived(messageId, includeEvents);
+                    return summary.billed() ? r.withBilling(summary) : r;
+                });
+    }
+
+    public BillingSummary billingSummary(String messageId) {
+        return billing.summarize(List.of(messageId), billingService.debitTypes(), billingService.creditTypes())
+                .getOrDefault(messageId, BillingSummary.NOT_BILLED);
+    }
+
+    public BillingDetailsResponse billingDetails(String messageId) {
+        List<BillingEventView> list = billing.findByMessageId(messageId, properties.getApi().getMaxEventsPageSize())
+                .stream().map(mapper::toBillingView).toList();
+        return new BillingDetailsResponse(messageId, billingSummary(messageId), list);
+    }
+
+    public List<BillingEventView> recentBillingByProcessingStatus(String status, int limit) {
+        int capped = Math.max(1, Math.min(limit, properties.getApi().getMaxEventsPageSize()));
+        return billing.findByProcessingStatus(status, capped).stream().map(mapper::toBillingView).toList();
     }
 
     private DlrStatusResponse notReceived(String messageId, boolean includeEvents) {
@@ -97,15 +127,24 @@ public class DlrQueryService {
         List<String> unique = new ArrayList<>(new LinkedHashSet<>(ids));
         Map<String, DlrMessageStatus> found = statuses.findByMessageIds(unique).stream()
                 .collect(Collectors.toMap(DlrMessageStatus::getMessageId, Function.identity()));
+        Map<String, BillingSummary> billed = billing.summarize(unique, billingService.debitTypes(), billingService.creditTypes());
+        boolean requireBilling = request.billingRequired();
+        boolean matching = expected != null || requireBilling;
 
         int received = 0, delivered = 0, failed = 0, expired = 0, rejected = 0, sent = 0, unknown = 0, missing = 0, matched = 0;
+        int billedCount = 0;
         List<DlrVerificationResponse.Result> results = new ArrayList<>(ids.size());
         for (String id : ids) {
             DlrMessageStatus s = found.get(id);
+            BillingSummary b = billed.get(id);
+            if (b != null) {
+                billedCount++;
+            }
             if (s == null) {
                 missing++;
                 results.add(new DlrVerificationResponse.Result(id, false, "PENDING", null, null, null, null,
-                        expected == null ? null : Boolean.FALSE));
+                        b != null, b == null ? null : b.units(), b == null ? null : b.totalAmount(),
+                        b == null ? null : b.currency(), matching ? Boolean.FALSE : null));
                 continue;
             }
             received++;
@@ -118,15 +157,18 @@ public class DlrQueryService {
                 case SENT -> sent++;
                 case UNKNOWN -> unknown++;
             }
-            Boolean isMatch = expected == null ? null : st == expected;
+            Boolean isMatch = matching ? (expected == null || st == expected) && (!requireBilling || b != null) : null;
             if (Boolean.TRUE.equals(isMatch)) {
                 matched++;
             }
             results.add(new DlrVerificationResponse.Result(id, true, st.name(), s.getProviderStatus(),
-                    s.getStatusCode(), s.getSource(), s.getCorrelationId(), isMatch));
+                    s.getStatusCode(), s.getSource(), s.getCorrelationId(), b != null,
+                    b == null ? null : b.units(), b == null ? null : b.totalAmount(), b == null ? null : b.currency(),
+                    isMatch));
         }
         return new DlrVerificationResponse(ids.size(), received, delivered, failed, expired, rejected, sent, unknown,
-                missing, expected == null ? null : expected.name(), expected == null ? null : matched,
-                expected == null ? null : matched == ids.size(), results);
+                missing, billedCount, ids.size() - billedCount, expected == null ? null : expected.name(),
+                requireBilling ? Boolean.TRUE : null, matching ? matched : null,
+                matching ? matched == ids.size() : null, results);
     }
 }

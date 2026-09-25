@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smsframework.dlr.adapter.DlrAdapterRegistry;
 import com.smsframework.dlr.adapter.DlrProviderAdapter;
+import com.smsframework.dlr.billing.BillingDlrAdapter;
+import com.smsframework.dlr.billing.BillingProcessingService;
+import com.smsframework.dlr.billing.BillingResult;
+import com.smsframework.dlr.billing.NormalizedBillingEvent;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.NormalizedStatus;
 import com.smsframework.dlr.domain.ProcessingStatus;
@@ -49,7 +53,12 @@ public class DlrProcessingService {
     /** Outcome of one callback, returned to the controller (and to the provider as an ack). */
     public record ProcessingResult(Long eventId, String source, String messageId, ProcessingStatus processingStatus,
                                    NormalizedStatus normalizedStatus, String currentStatus, String rejectionReason,
-                                   String note, boolean payloadTooLarge) {
+                                   String note, boolean payloadTooLarge, BillingResult billing) {
+
+        /** True when this callback was a billing DLR (see {@link #billing()}). */
+        public boolean isBilling() {
+            return billing != null;
+        }
     }
 
     private final DlrAdapterRegistry adapters;
@@ -64,12 +73,17 @@ public class DlrProcessingService {
     private final ObjectMapper objectMapper;
     private final DlrProperties properties;
     private final String instanceId;
+    private final List<BillingDlrAdapter> billingAdapters;
+    private final BillingProcessingService billingService;
 
     public DlrProcessingService(DlrAdapterRegistry adapters, SourceResolver sourceResolver,
                                 DedupKeyGenerator dedupKeyGenerator, DlrStateMachine stateMachine,
                                 DlrEventRepository events, DlrMessageStatusRepository statuses, DlrMapper mapper,
                                 DlrMetrics metrics, TransactionTemplate tx, ObjectMapper objectMapper,
-                                DlrProperties properties) {
+                                DlrProperties properties, List<BillingDlrAdapter> billingAdapters,
+                                BillingProcessingService billingService) {
+        this.billingAdapters = List.copyOf(billingAdapters);
+        this.billingService = billingService;
         this.adapters = adapters;
         this.sourceResolver = sourceResolver;
         this.dedupKeyGenerator = dedupKeyGenerator;
@@ -143,6 +157,13 @@ public class DlrProcessingService {
             return reject(explicitSource, null, rawForStorage, "unsupported DLR source: " + explicitSource
                     + " (supported: " + adapters.sources() + ")", false);
         }
+
+        // 3a. Billing DLR ({"event_type":"billing","events":[...]}) -----------------------------------
+        Optional<BillingDlrAdapter> billingAdapter = billingAdapters.stream().filter(b -> b.isBillingPayload(json)).findFirst();
+        if (billingAdapter.isPresent()) {
+            return processBilling(billingAdapter.get(), explicitSource, json, rawForStorage);
+        }
+
         if (explicitSource == null && !sourceResolver.detectFromPayload()) {
             return reject(UNKNOWN_SOURCE, null, rawForStorage,
                     "DLR source not specified and payload detection is disabled", false);
@@ -221,6 +242,27 @@ public class DlrProcessingService {
         }
     }
 
+    private ProcessingResult processBilling(BillingDlrAdapter adapter, String explicitSource, JsonNode json, String raw) {
+        String source = explicitSource != null ? explicitSource : properties.getBilling().getDefaultSource();
+        if (!adapter.acceptsSource(source)) {
+            return reject(source, null, raw, "billing DLRs are not accepted from source " + source
+                    + " (allowed: " + properties.getBilling().getSources() + ")", false);
+        }
+        List<NormalizedBillingEvent> billingEvents;
+        try {
+            billingEvents = adapter.normalize(json);
+        } catch (DlrValidationException e) {
+            return reject(source, null, raw, "billing: " + e.getReason(), false);
+        }
+        BillingResult br = billingService.process(source, billingEvents, raw, instanceId);
+        ProcessingStatus overall = switch (br.processingStatus()) {
+            case "REJECTED" -> ProcessingStatus.REJECTED;
+            case "DUPLICATE" -> ProcessingStatus.DUPLICATE;
+            default -> ProcessingStatus.APPLIED;
+        };
+        return new ProcessingResult(null, source, null, overall, null, null, null, null, false, br);
+    }
+
     private ProcessingResult reject(String source, String messageId, String raw, String reason, boolean tooLarge) {
         String src = source == null ? UNKNOWN_SOURCE : source;
         DlrEvent event = mapper.rejectedEvent(src, messageId, raw, reason, instanceId);
@@ -236,12 +278,12 @@ public class DlrProcessingService {
         log.warn("DLR rejected source={} message_id={} processing_status=REJECTED event_id={} reason=\"{}\"",
                 src, messageId, id, reason);
         return new ProcessingResult(id, event.getSource(), messageId, ProcessingStatus.REJECTED, null, null, reason,
-                null, tooLarge);
+                null, tooLarge, null);
     }
 
     private ProcessingResult result(Long eventId, NormalizedDlr dlr, ProcessingStatus ps, String currentStatus, String note) {
         return new ProcessingResult(eventId, dlr.getSource(), dlr.getMessageId(), ps, dlr.getNormalizedStatus(),
-                currentStatus, null, note, false);
+                currentStatus, null, note, false, null);
     }
 
     private void recordMetricsAndLog(NormalizedDlr dlr, ProcessingResult r) {

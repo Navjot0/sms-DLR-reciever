@@ -39,6 +39,8 @@ public class DlrProperties {
 
     private final Security security = new Security();
 
+    private final Billing billing = new Billing();
+
     // ------------------------------------------------------------------
 
     public static Map<String, List<String>> defaultStatusMapping() {
@@ -132,6 +134,45 @@ public class DlrProperties {
         public void setRejectedHttpStatus(int rejectedHttpStatus) { this.rejectedHttpStatus = rejectedHttpStatus; }
         public int getMaxEventsPageSize() { return maxEventsPageSize; }
         public void setMaxEventsPageSize(int maxEventsPageSize) { this.maxEventsPageSize = maxEventsPageSize; }
+    }
+
+    public static class Billing {
+        /** Accept billing DLRs ({"event_type":"billing","events":[...]}) on /api/v1/dlr/receive. */
+        private boolean enabled = true;
+        /** Value of event_type that marks a billing callback (case-insensitive). */
+        private String eventType = "billing";
+        /** Source recorded when the caller does not send one (billing callbacks come from the SMS gateway). */
+        private String defaultSource = "DEFAULT_SMS";
+        /** Sources allowed to send billing DLRs. */
+        private List<String> sources = new ArrayList<>(List.of("DEFAULT_SMS"));
+        /**
+         * Billing message ids may carry a part suffix, e.g. "9b1b0309-...:1". The text before the LAST separator is
+         * the SMS message_id used for correlation with the status DLR; the numeric suffix is stored as part_number.
+         */
+        private String messageIdPartSeparator = ":";
+        /** Transaction types that add to the billed amount. */
+        private List<String> debitTypes = new ArrayList<>(List.of("debit"));
+        /** Transaction types that subtract from the billed amount. */
+        private List<String> creditTypes = new ArrayList<>(List.of("credit", "refund", "reversal"));
+        /** Max events accepted in one billing callback. */
+        private int maxEventsPerCallback = 1000;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getEventType() { return eventType; }
+        public void setEventType(String eventType) { this.eventType = eventType; }
+        public String getDefaultSource() { return defaultSource; }
+        public void setDefaultSource(String defaultSource) { this.defaultSource = defaultSource; }
+        public List<String> getSources() { return sources; }
+        public void setSources(List<String> sources) { this.sources = sources; }
+        public String getMessageIdPartSeparator() { return messageIdPartSeparator; }
+        public void setMessageIdPartSeparator(String messageIdPartSeparator) { this.messageIdPartSeparator = messageIdPartSeparator; }
+        public List<String> getDebitTypes() { return debitTypes; }
+        public void setDebitTypes(List<String> debitTypes) { this.debitTypes = debitTypes; }
+        public List<String> getCreditTypes() { return creditTypes; }
+        public void setCreditTypes(List<String> creditTypes) { this.creditTypes = creditTypes; }
+        public int getMaxEventsPerCallback() { return maxEventsPerCallback; }
+        public void setMaxEventsPerCallback(int maxEventsPerCallback) { this.maxEventsPerCallback = maxEventsPerCallback; }
     }
 
     public static class Security {
@@ -252,4 +293,5 @@ public class DlrProperties {
     public Idempotency getIdempotency() { return idempotency; }
     public Api getApi() { return api; }
     public Security getSecurity() { return security; }
+    public Billing getBilling() { return billing; }
 }

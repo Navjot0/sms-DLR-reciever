@@ -5,7 +5,7 @@ A generic, stateless service that **receives, validates, normalizes, correlates 
 > **The receiver is the source of truth for DLR verification.**
 > An HTTP 200 on the DLR callback does not mean a test passes. A test passes only when the expected DLR has been received, correlated by `message_id`, persisted in PostgreSQL, and read back through `GET /api/v1/dlr/{messageId}` or `POST /api/v1/dlr/verify`.
 
-Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`) and **WebEngage SMS DLR** (`WEBENGAGE`). You can add another provider by writing one class (see [Adding a provider](#adding-a-provider)).
+Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS DLR** (`WEBENGAGE`), and the **billing DLR** the SMS gateway sends alongside the status DLR (see [Billing DLRs](#billing-dlrs)). You can add another provider by writing one class (see [Adding a provider](#adding-a-provider)).
 
 ---
 
@@ -19,6 +19,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`) and **WebEngage SM
 - [Idempotency and duplicates](#idempotency-and-duplicates)
 - [State transitions and out-of-order DLRs](#state-transitions-and-out-of-order-dlrs)
 - [Validation and rejected DLRs](#validation-and-rejected-dlrs)
+- [Billing DLRs](#billing-dlrs)
 - [Database](#database)
 - [Security](#security)
 - [Logging](#logging)
@@ -107,6 +108,7 @@ DlrReceiverController          raw body (so malformed JSON can still be stored)
         ▼
 DlrProcessingService           provider-independent pipeline
    ├─ SourceResolver           header → query param → payload structure detection
+   ├─ event_type = "billing"? ─► DefaultBillingDlrAdapter ─► BillingProcessingService ─► dlr_billing_events
    ├─ DlrAdapterRegistry ──►  DlrProviderAdapter
    │                            ├─ DefaultSmsDlrAdapter
    │                            ├─ WebEngageDlrAdapter
@@ -121,6 +123,7 @@ DlrProcessingService           provider-independent pipeline
 PostgreSQL
    ├─ dlr_events               every callback: APPLIED / IGNORED / DUPLICATE / REJECTED + raw_payload
    └─ dlr_message_status       current state per message_id  ◄── GET /api/v1/dlr/{id}, POST /verify
+   └─ dlr_billing_events       every billing event, joined by message_id ◄── billing summary in the same APIs
 ```
 
 Design choices:
@@ -145,12 +148,14 @@ src/main/java/com/smsframework/dlr
 ├── mapper       DlrMapper
 ├── exception    DlrExceptionHandler, DlrValidationException, DlrPersistenceException
 ├── security     CallbackAuthenticationFilter, CallbackAuthenticator, IpAllowlist, CachedBodyHttpServletRequest
+├── billing      BillingDlrAdapter, DefaultBillingDlrAdapter, BillingProcessingService, DlrBillingRepository,
+│                DlrBillingEvent, NormalizedBillingEvent, BillingEventRequest, BillingSummary, BillingResult, …
 ├── config       DlrProperties, DlrConfiguration
 ├── domain       NormalizedStatus, ProcessingStatus
 └── util         MobileMasker, DlrValues
 src/main/resources
 ├── application.yml
-└── db/migration/V1__create_dlr_tables.sql
+└── db/migration/V1__create_dlr_tables.sql, V2__create_dlr_billing_events.sql
 automation/      pytest helper + example tests
 samples/         sample DLR payloads
 scripts/         curl-examples.sh
@@ -164,12 +169,14 @@ Dockerfile, docker-compose.yml, .env.example
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/dlr/receive` | Generic callback endpoint for every provider |
+| `POST` | `/api/v1/dlr/receive` | Generic callback endpoint for every provider, for status and billing DLRs |
 | `GET` | `/api/v1/dlr/{messageId}` | Current DLR for a message (`?include_events=true` adds the history) |
 | `POST` | `/api/v1/dlr/verify` | Bulk verification for automation |
 | `GET` | `/api/v1/dlr/{messageId}/events` | Every callback for a message, with raw payloads |
+| `GET` | `/api/v1/dlr/{messageId}/billing` | Billing summary and every billing event for a message |
 | `GET` | `/api/v1/dlr/search?correlation_id=…` or `?external_message_id=…` | Lookup by secondary keys |
 | `GET` | `/api/v1/dlr/events/rejected?limit=50` | Most recent rejected callbacks |
+| `GET` | `/api/v1/dlr/events/billing/rejected?limit=50` | Most recent rejected billing events |
 | `GET` | `/actuator/health` | Liveness, readiness and PostgreSQL status |
 | `GET` | `/actuator/prometheus` | Metrics |
 
@@ -352,14 +359,91 @@ When a rejected payload still contains a readable message id, it is stored in `m
 
 ---
 
+## Billing DLRs
+
+For each SMS the gateway sends two callbacks to the same `POST /api/v1/dlr/receive` endpoint: the **status DLR** (`DELIVRD`, `UNDELIV`, …) and a **billing DLR**:
+
+```json
+{
+  "event_type": "billing",
+  "events": [
+    {
+      "transaction_type": "debit",
+      "message_id": "9b1b0309-4d49-48be-b2c1-0283892ded9e:1",
+      "product": "SMS Transactional",
+      "units": 1,
+      "sale_price": 1,
+      "currency": "INR",
+      "surcharge": 0,
+      "total_amount": 1
+    }
+  ]
+}
+```
+
+**Detection.** A body with `"event_type": "billing"` is handled as billing, whatever the headers say. It never goes through the status adapters and never changes the status DLR state. `X-DLR-Source` is optional. Without it the source is `DEFAULT_SMS` (`dlr.billing.default-source`). Only sources in `dlr.billing.sources` may send billing. Any other source is rejected.
+
+**Correlation.** The billing `message_id` carries a part suffix: `<message_id>:<part>`. The receiver stores it three ways:
+
+| Column | Value for `9b1b0309-…:1` | Used for |
+|---|---|---|
+| `billing_message_id` | `9b1b0309-…:1` | Exactly as sent (audit, idempotency) |
+| `message_id` | `9b1b0309-…` | Join key with the status DLR |
+| `part_number` | `1` | Multipart SMS: each part is billed separately |
+
+Only a numeric suffix after the last `:` is treated as a part number. `abc-123` or `urn:msg:abc` are kept unchanged. The separator is set by `dlr.billing.message-id-part-separator`.
+
+**Totals.** Per message, over `APPLIED` billing events: `units` and `total_amount` are **net**. Debit types (`debit`) add; credit types (`credit`, `refund`, `reversal`) subtract. Both lists are configurable. `debit_amount` and `credit_amount` are also returned. `currency` is `MIXED` if events disagree.
+
+**Order does not matter.** Billing may arrive before or after the status DLR. `GET /api/v1/dlr/{id}` shows the billing as soon as it exists, even while `status` is still `PENDING`.
+
+**Idempotency.** Each event gets a dedup key: SHA-256 of `source`, `billing_message_id`, `transaction_type`, `units`, `currency` and `total_amount`. `1` and `1.0` count as the same amount. It is protected by a partial unique index, like status DLRs. A resent billing callback is stored as `DUPLICATE` and never double-counts. A later refund for the same part is a different event and is applied.
+
+**Validation.** Per event, `message_id` and `transaction_type` are required. `units` must be a non-negative whole number. `sale_price`, `surcharge` and `total_amount` must be numbers, sent either as JSON numbers or as numeric strings.
+
+- An invalid **event** is stored in `dlr_billing_events` as `REJECTED` with its reason and raw JSON. The other events in the same callback are still applied, and the batch status becomes `PARTIAL`.
+- An invalid **callback** is stored in `dlr_events` as `REJECTED`, like any other rejected callback. That covers `events` missing, empty or not an array, a disallowed source, and malformed JSON.
+
+**Acknowledgement** (for the gateway, not for automation):
+
+```json
+{"event_type":"billing","source":"DEFAULT_SMS","batch_id":"c3162625-…","processing_status":"APPLIED",
+ "total":1,"applied":1,"duplicates":0,"rejected":0,
+ "events":[{"index":0,"event_id":61,"message_id":"9b1b0309-…","billing_message_id":"9b1b0309-…:1","processing_status":"APPLIED"}]}
+```
+
+`processing_status` is one of `APPLIED`, `DUPLICATE`, `PARTIAL` or `REJECTED`. HTTP 200 is returned unless every event was rejected (400).
+
+**Billing in the query APIs.**
+
+`GET /api/v1/dlr/{messageId}` includes:
+
+```json
+"billing": {"billed": true, "events": 2, "parts": 2, "units": 2, "debit_amount": 2, "credit_amount": 0,
+            "total_amount": 2, "currency": "INR", "last_billed_at": "2026-06-22T06:17:34Z"}
+```
+
+When nothing has been billed, this is `{"billed": false, "events": 0}`.
+
+`GET /api/v1/dlr/{messageId}/billing` returns that summary plus every billing event (`APPLIED`, `DUPLICATE`, `REJECTED`) with its raw JSON.
+
+`POST /api/v1/dlr/verify` always reports `billed` and `billing_missing` counts. Each result carries `billed`, `billed_units`, `billed_amount` and `currency`. With `"require_billing": true`, a message only counts as `matched` when it has the expected status **and** a billing DLR:
+
+```json
+{"message_ids": ["MSG-001", "MSG-002"], "expected_status": "DELIVERED", "require_billing": true}
+```
+
+---
+
 ## Database
 
-The schema is in `src/main/resources/db/migration/V1__create_dlr_tables.sql`.
+The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`).
 
 - `dlr_events` has the columns you specified: `id`, `source`, `message_id`, `external_message_id`, `correlation_id`, `mobile`, `sender`, `service`, `provider_status`, `normalized_status`, `status_code`, `error_code`, `error_reason`, `submit_at`, `dlr_received_at`, `entity_id`, `template_id`, `units`, `raw_payload JSONB NOT NULL`, `processing_status`, `created_at`, `updated_at`. It adds `campaign_id`, `request_id`, `provider_event_id`, `rejection_reason`, `processing_note`, `dedup_key`, `duplicate_of` and `receiver_instance`.
   - `message_id` may be `NULL` **only** for `REJECTED` rows. A `CHECK` constraint enforces this, so a callback missing its id can still be stored.
   - Indexes: `message_id`, `external_message_id`, `correlation_id`, `mobile`, `normalized_status`, `source`, `created_at`, `processing_status`, plus the partial unique index on `dedup_key`.
 - `dlr_message_status` has one row per `message_id` with the current state, `last_event_id`, `event_count`, `duplicate_count` and timestamps. It has the same secondary indexes.
+- `dlr_billing_events` (`V2__create_dlr_billing_events.sql`) has one row per billing event: `message_id`, `billing_message_id`, `part_number`, `transaction_type`, `product`, `units`, `sale_price`, `currency`, `surcharge`, `total_amount` (`NUMERIC(18,6)`), `raw_event` and `raw_payload` (JSONB), `processing_status` (`APPLIED` / `DUPLICATE` / `REJECTED`), `rejection_reason`, `dedup_key`, `duplicate_of` and `batch_id` / `batch_index`, which group the events of one callback.
 
 Useful queries:
 
@@ -371,6 +455,17 @@ FROM dlr_events WHERE message_id = '…' ORDER BY id;
 -- what got rejected today and why
 SELECT rejection_reason, count(*) FROM dlr_events
 WHERE processing_status = 'REJECTED' AND created_at > now() - interval '1 day' GROUP BY 1;
+
+-- billing vs delivery for one message
+SELECT s.message_id, s.normalized_status, b.billing_message_id, b.transaction_type, b.units, b.total_amount, b.currency
+FROM dlr_message_status s LEFT JOIN dlr_billing_events b
+  ON b.message_id = s.message_id AND b.processing_status = 'APPLIED'
+WHERE s.message_id = '…';
+
+-- delivered but never billed (last 24h)
+SELECT s.message_id FROM dlr_message_status s
+WHERE s.normalized_status = 'DELIVERED' AND s.created_at > now() - interval '1 day'
+  AND NOT EXISTS (SELECT 1 FROM dlr_billing_events b WHERE b.message_id = s.message_id AND b.processing_status = 'APPLIED');
 
 -- unexpected provider statuses
 SELECT source, provider_status, count(*) FROM dlr_events WHERE normalized_status = 'UNKNOWN' GROUP BY 1, 2;
@@ -432,6 +527,8 @@ With the `docker`, `prod` or `production` profile, logs are emitted as **JSON (l
 | `dlr_ignored_total{reason=same_state\|transition_not_allowed}` | Valid callbacks the state machine did not apply |
 | `dlr_processing_error_total` | Unexpected or database errors (returned as 503) |
 | `dlr_auth_failed_total{mechanism}` | Refused callbacks |
+| `dlr_billing_received_total`, `dlr_billing_applied_total`, `dlr_billing_duplicate_total`, `dlr_billing_rejected_total` | Billing events by outcome |
+| `dlr_billing_units_total` | Units of applied debit billing events |
 | `dlr_processing_latency_seconds` | Histogram of end-to-end processing time |
 
 `GET /actuator/health` reports PostgreSQL connectivity (`components.db`) and includes Kubernetes-style probes at `/actuator/health/liveness` and `/actuator/health/readiness`.
@@ -444,10 +541,12 @@ With the `docker`, `prod` or `production` profile, logs are emitted as **JSON (l
 
 - `wait_for_dlr(message_id, expected_status, timeout=120, poll_interval=2)` polls `GET /api/v1/dlr/{id}`. It keeps polling through intermediate statuses (SENT before DELIVERED). It **fails immediately** when a different final status arrives. On timeout, it reports the last state and any rejected callbacks.
 - `wait_for_dlrs(message_ids, expected_status, timeout=300)` does the same for many messages through `POST /api/v1/dlr/verify`.
-- `get_dlr`, `verify_dlrs`, plus the simulator helpers `send_default_sms_dlr`, `send_webengage_dlr` and `send_raw_dlr`.
+- `wait_for_billing(message_id, expected_units=None, expected_amount=None, expected_currency=None, timeout=120)` polls `GET /api/v1/dlr/{id}/billing` until the billing DLR is persisted with the expected net units, amount and currency, summed over all parts.
+- `wait_for_dlrs(..., require_billing=True)` also requires a billing DLR for every message.
+- `get_dlr`, `get_billing`, `verify_dlrs`, plus the simulator helpers `send_default_sms_dlr`, `send_webengage_dlr`, `send_billing_dlr` and `send_raw_dlr`.
 
 ```python
-from dlr_helper import wait_for_dlr
+from dlr_helper import wait_for_billing, wait_for_dlr
 
 def test_otp_sms_is_delivered(sms_api):
     message_id = sms_api.send(mobile="917973059161", text="Your OTP is 123456")["message_id"]
@@ -456,6 +555,9 @@ def test_otp_sms_is_delivered(sms_api):
 
     assert dlr["received"] is True
     assert dlr["provider_status"] == "DELIVRD"
+
+    billing = wait_for_billing(message_id, expected_units=1, expected_amount="1", expected_currency="INR")
+    assert billing["billed"] is True
 ```
 
 Run the examples against a running receiver:
@@ -466,7 +568,7 @@ pip install -r requirements.txt
 DLR_BASE_URL=http://localhost:8080 pytest -q
 ```
 
-`test_dlr_verification.py` covers delivered, WebEngage `SENT → DELIVERED`, failing fast on `FAILED`, duplicates and out-of-order callbacks, timeouts, rejected-callback diagnostics and a 100-message bulk run.
+`test_dlr_verification.py` covers delivered, WebEngage `SENT → DELIVERED`, failing fast on `FAILED`, duplicates and out-of-order callbacks, timeouts, rejected-callback diagnostics, a 100-message bulk run, and billing: delivered-and-billed, multipart sums with retries, bulk `require_billing`, and missing-billing detection.
 
 ---
 
@@ -492,8 +594,10 @@ DLR_TEST_DB_URL=jdbc:postgresql://dbhost:5432/dlr_test DLR_TEST_DB_USERNAME=dlr 
 | `DlrProcessingServiceTest` | Pipeline with mocked DB: applied, progression, out-of-order, duplicate, rejected, malformed, unknown source, detection, NUL sanitizing |
 | `SecurityUnitTest`, `DlrConfigurationTest` | API key, bearer, IP/CIDR, HMAC (with replay window), production startup guard |
 | `DlrReceiverIntegrationTest` | POST → PostgreSQL → GET with exact column-level assertions, WebEngage lifecycle, all source-resolution modes, duplicates, 40 concurrent identical callbacks (exactly one `APPLIED`), concurrent shuffled progressions, rejected, malformed and oversized storage, verify API, correlation search, health, metrics |
+| `DefaultBillingDlrAdapterTest` | Exact normalization of the reference billing payload, `<id>:<part>` parsing, numeric strings and decimals, per-event and whole-callback validation |
+| `DlrBillingIntegrationTest` | Status + billing correlated by message_id (exact column assertions), billing before status, multipart sums, refunds, duplicates (incl. `1` vs `1.0`), 30 concurrent identical callbacks, partial batches, rejected callbacks, `require_billing` verification, metrics |
 | `DlrSecurityIntegrationTest` | Authentication enforced end to end; refused callbacks are not stored |
-| `DlrBulkIntegrationTest` | 1 / 100 / 1,000 / 10,000 DLRs over HTTP, 48 at a time, mixed providers and statuses, progressions and duplicates. Every message's status, mobile and correlation id is checked against the database |
+| `DlrBulkIntegrationTest` | 1 / 100 / 1,000 / 10,000 DLRs over HTTP, 48 at a time, mixed providers and statuses, progressions, duplicates and multipart billing DLRs. Every message's status, mobile, correlation id and billed units and amount are checked against the database |
 
 ---
 
@@ -508,6 +612,7 @@ The full, commented configuration is in `src/main/resources/application.yml`, wi
 | `SERVER_PORT` | `8080` | HTTP port |
 | `DLR_TIMEZONE` | `Asia/Kolkata` | Zone for zoned or epoch provider timestamps and the receiver-time `received_at` fallback |
 | `DLR_INSTANCE_ID` | hostname | Written to `dlr_events.receiver_instance` |
+| `DLR_BILLING_ENABLED` | `true` | Accept billing DLRs (other billing settings are under `dlr.billing` in `application.yml`) |
 | `DLR_DETECT_FROM_PAYLOAD` | `true` | Allow detecting the source from the payload structure when no header or parameter is sent |
 | `DLR_AUTH_ENABLED` … | see [Security](#security) | Callback authentication |
 | `SPRING_PROFILES_ACTIVE` | – (`docker` in the container) | `docker` (JSON logs), `prod` (JSON logs, auth enforced) |
