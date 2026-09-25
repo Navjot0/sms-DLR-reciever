@@ -67,6 +67,9 @@ logging:
 dlr:
   instance-id: ${DLR_INSTANCE_ID:}
   timezone: ${DLR_TIMEZONE:Asia/Kolkata}
+  # Multipart SMS: status and billing DLRs may carry "<message_id>:<part>" (e.g. "c9b2...:1").
+  # Stored as message_id "c9b2..." + part_number 1 so both DLRs correlate. Empty = no splitting.
+  message-id-part-separator: ":"
 
   source-resolution:
     headers: [X-DLR-Source, X-DLR-Provider, source, provider]
@@ -119,7 +122,6 @@ dlr:
     event-type: billing
     default-source: DEFAULT_SMS          # recorded when the callback carries no X-DLR-Source
     sources: [DEFAULT_SMS]               # sources allowed to send billing DLRs
-    message-id-part-separator: ":"       # "<message_id>:<part>" -> message_id + part_number
     debit-types: [debit]
     credit-types: [credit, refund, reversal]
     max-events-per-callback: 1000

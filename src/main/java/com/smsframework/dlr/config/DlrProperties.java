@@ -20,6 +20,13 @@ public class DlrProperties {
     /** Zone used to convert zoned/epoch provider timestamps. Unzoned provider timestamps are stored as sent. */
     private String timezone = "Asia/Kolkata";
 
+    /**
+     * Status and billing DLRs of a multipart SMS carry "&lt;message_id&gt;:&lt;part&gt;" (e.g. "c9b2e601-...:1").
+     * The text before the LAST separator is the message_id used for correlation/lookup; the numeric suffix is
+     * stored as part_number and the id as received as provider_message_id. Empty = no splitting.
+     */
+    private String messageIdPartSeparator = ":";
+
     private final SourceResolution sourceResolution = new SourceResolution();
 
     /**
@@ -145,11 +152,6 @@ public class DlrProperties {
         private String defaultSource = "DEFAULT_SMS";
         /** Sources allowed to send billing DLRs. */
         private List<String> sources = new ArrayList<>(List.of("DEFAULT_SMS"));
-        /**
-         * Billing message ids may carry a part suffix, e.g. "9b1b0309-...:1". The text before the LAST separator is
-         * the SMS message_id used for correlation with the status DLR; the numeric suffix is stored as part_number.
-         */
-        private String messageIdPartSeparator = ":";
         /** Transaction types that add to the billed amount. */
         private List<String> debitTypes = new ArrayList<>(List.of("debit"));
         /** Transaction types that subtract from the billed amount. */
@@ -165,8 +167,6 @@ public class DlrProperties {
         public void setDefaultSource(String defaultSource) { this.defaultSource = defaultSource; }
         public List<String> getSources() { return sources; }
         public void setSources(List<String> sources) { this.sources = sources; }
-        public String getMessageIdPartSeparator() { return messageIdPartSeparator; }
-        public void setMessageIdPartSeparator(String messageIdPartSeparator) { this.messageIdPartSeparator = messageIdPartSeparator; }
         public List<String> getDebitTypes() { return debitTypes; }
         public void setDebitTypes(List<String> debitTypes) { this.debitTypes = debitTypes; }
         public List<String> getCreditTypes() { return creditTypes; }
@@ -280,6 +280,8 @@ public class DlrProperties {
 
     // ------------------------------------------------------------------
 
+    public String getMessageIdPartSeparator() { return messageIdPartSeparator; }
+    public void setMessageIdPartSeparator(String messageIdPartSeparator) { this.messageIdPartSeparator = messageIdPartSeparator; }
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
     public String getInstanceId() { return instanceId; }

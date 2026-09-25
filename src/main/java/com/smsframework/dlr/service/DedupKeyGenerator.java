@@ -73,7 +73,8 @@ public class DedupKeyGenerator {
     private static Function<NormalizedDlr, Object> extractor(String field) {
         return switch (field) {
             case "source" -> NormalizedDlr::getSource;
-            case "message_id" -> NormalizedDlr::getMessageId;
+            // id exactly as received, so part 1 and part 2 of a multipart SMS are different events
+            case "message_id" -> d -> d.getProviderMessageId() != null ? d.getProviderMessageId() : d.getMessageId();
             case "provider_status" -> NormalizedDlr::getProviderStatus;
             case "normalized_status" -> NormalizedDlr::getNormalizedStatus;
             case "status_code" -> NormalizedDlr::getStatusCode;

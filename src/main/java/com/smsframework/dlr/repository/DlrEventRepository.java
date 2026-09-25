@@ -22,13 +22,13 @@ import java.util.Optional;
 public class DlrEventRepository {
 
     private static final String COLUMNS = """
-            source, message_id, external_message_id, correlation_id, campaign_id, request_id, provider_event_id,
+            source, message_id, provider_message_id, part_number, external_message_id, correlation_id, campaign_id, request_id, provider_event_id,
             mobile, sender, service, provider_status, normalized_status, status_code, error_code, error_reason,
             submit_at, dlr_received_at, entity_id, template_id, units, raw_payload, processing_status,
             processing_note, rejection_reason, dedup_key, duplicate_of, receiver_instance""";
 
     private static final String VALUES = """
-            :source, :messageId, :externalMessageId, :correlationId, :campaignId, :requestId, :providerEventId,
+            :source, :messageId, :providerMessageId, :partNumber, :externalMessageId, :correlationId, :campaignId, :requestId, :providerEventId,
             :mobile, :sender, :service, :providerStatus, :normalizedStatus, :statusCode, :errorCode, :errorReason,
             :submitAt, :dlrReceivedAt, :entityId, :templateId, :units, CAST(:rawPayload AS jsonb), :processingStatus,
             :processingNote, :rejectionReason, :dedupKey, :duplicateOf, :receiverInstance""";
@@ -99,6 +99,14 @@ public class DlrEventRepository {
                 new MapSqlParameterSource().addValue("m", messageId).addValue("limit", limit), MAPPER);
     }
 
+    /** Latest valid (APPLIED / IGNORED) status per part for a multipart message. */
+    public List<DlrEvent> findLatestPerPart(String messageId) {
+        return jdbc.query("SELECT DISTINCT ON (part_number) id, " + COLUMNS + ", created_at, updated_at FROM dlr_events "
+                        + "WHERE message_id = :m AND part_number IS NOT NULL AND processing_status IN ('APPLIED', 'IGNORED') "
+                        + "ORDER BY part_number, id DESC",
+                new MapSqlParameterSource("m", messageId), MAPPER);
+    }
+
     public List<DlrEvent> findByProcessingStatus(ProcessingStatus status, int limit) {
         return jdbc.query(SELECT + "WHERE processing_status = :s ORDER BY id DESC LIMIT :limit",
                 new MapSqlParameterSource().addValue("s", status.name()).addValue("limit", limit), MAPPER);
@@ -108,6 +116,8 @@ public class DlrEventRepository {
         return new MapSqlParameterSource()
                 .addValue("source", e.getSource())
                 .addValue("messageId", e.getMessageId())
+                .addValue("providerMessageId", e.getProviderMessageId())
+                .addValue("partNumber", e.getPartNumber())
                 .addValue("externalMessageId", e.getExternalMessageId())
                 .addValue("correlationId", e.getCorrelationId())
                 .addValue("campaignId", e.getCampaignId())
@@ -140,6 +150,8 @@ public class DlrEventRepository {
         e.setId(rs.getLong("id"));
         e.setSource(rs.getString("source"));
         e.setMessageId(rs.getString("message_id"));
+        e.setProviderMessageId(rs.getString("provider_message_id"));
+        e.setPartNumber(getInteger(rs, "part_number"));
         e.setExternalMessageId(rs.getString("external_message_id"));
         e.setCorrelationId(rs.getString("correlation_id"));
         e.setCampaignId(rs.getString("campaign_id"));

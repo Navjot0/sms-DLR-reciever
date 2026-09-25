@@ -15,6 +15,7 @@ import com.smsframework.dlr.dto.DlrVerificationResponse;
 import com.smsframework.dlr.entity.DlrEvent;
 import com.smsframework.dlr.entity.DlrMessageStatus;
 import com.smsframework.dlr.mapper.DlrMapper;
+import com.smsframework.dlr.util.MessageIdParts;
 import com.smsframework.dlr.repository.DlrEventRepository;
 import com.smsframework.dlr.repository.DlrMessageStatusRepository;
 import org.springframework.stereotype.Service;
@@ -50,9 +51,16 @@ public class DlrQueryService {
         this.properties = properties;
     }
 
-    public DlrStatusResponse getStatus(String messageId, boolean includeEvents) {
+    /**
+     * Current DLR for a message. "c9b2...:1" (a part of a multipart SMS, as some DLRs carry it) and "c9b2..."
+     * resolve to the same message.
+     */
+    public DlrStatusResponse getStatus(String requestedId, boolean includeEvents) {
+        String messageId = normalizeId(requestedId);
+        String requested = messageId.equals(requestedId) ? null : requestedId;
         BillingSummary summary = billingSummary(messageId);
-        return statuses.findByMessageId(messageId)
+        List<DlrStatusResponse.PartStatus> parts = partStatuses(messageId);
+        DlrStatusResponse response = statuses.findByMessageId(messageId)
                 .map(s -> {
                     DlrStatusResponse r = mapper.toStatusResponse(s).withBilling(summary);
                     return includeEvents ? r.withEvents(eventViews(messageId)) : r;
@@ -61,6 +69,18 @@ public class DlrQueryService {
                     DlrStatusResponse r = notReceived(messageId, includeEvents);
                     return summary.billed() ? r.withBilling(summary) : r;
                 });
+        return parts.isEmpty() && requested == null ? response : response.withParts(parts.isEmpty() ? null : parts, requested);
+    }
+
+    public String normalizeId(String id) {
+        return MessageIdParts.base(id, properties.getMessageIdPartSeparator());
+    }
+
+    private List<DlrStatusResponse.PartStatus> partStatuses(String messageId) {
+        return events.findLatestPerPart(messageId).stream()
+                .map(e -> new DlrStatusResponse.PartStatus(e.getPartNumber(), e.getProviderMessageId(),
+                        e.getProviderStatus(), e.getNormalizedStatus(), e.getStatusCode()))
+                .toList();
     }
 
     public BillingSummary billingSummary(String messageId) {
@@ -68,7 +88,8 @@ public class DlrQueryService {
                 .getOrDefault(messageId, BillingSummary.NOT_BILLED);
     }
 
-    public BillingDetailsResponse billingDetails(String messageId) {
+    public BillingDetailsResponse billingDetails(String requestedId) {
+        String messageId = normalizeId(requestedId);
         List<BillingEventView> list = billing.findByMessageId(messageId, properties.getApi().getMaxEventsPageSize())
                 .stream().map(mapper::toBillingView).toList();
         return new BillingDetailsResponse(messageId, billingSummary(messageId), list);
@@ -88,8 +109,8 @@ public class DlrQueryService {
         return includeEvents && !all.isEmpty() ? r.withEvents(all.stream().map(mapper::toEventView).toList()) : r;
     }
 
-    public List<DlrEventView> eventViews(String messageId) {
-        return events.findByMessageId(messageId, properties.getApi().getMaxEventsPageSize())
+    public List<DlrEventView> eventViews(String requestedId) {
+        return events.findByMessageId(normalizeId(requestedId), properties.getApi().getMaxEventsPageSize())
                 .stream().map(mapper::toEventView).toList();
     }
 
@@ -124,7 +145,7 @@ public class DlrQueryService {
             }
         }
 
-        List<String> unique = new ArrayList<>(new LinkedHashSet<>(ids));
+        List<String> unique = new ArrayList<>(new LinkedHashSet<>(ids.stream().map(this::normalizeId).toList()));
         Map<String, DlrMessageStatus> found = statuses.findByMessageIds(unique).stream()
                 .collect(Collectors.toMap(DlrMessageStatus::getMessageId, Function.identity()));
         Map<String, BillingSummary> billed = billing.summarize(unique, billingService.debitTypes(), billingService.creditTypes());
@@ -135,8 +156,8 @@ public class DlrQueryService {
         int billedCount = 0;
         List<DlrVerificationResponse.Result> results = new ArrayList<>(ids.size());
         for (String id : ids) {
-            DlrMessageStatus s = found.get(id);
-            BillingSummary b = billed.get(id);
+            DlrMessageStatus s = found.get(normalizeId(id));
+            BillingSummary b = billed.get(normalizeId(id));
             if (b != null) {
                 billedCount++;
             }

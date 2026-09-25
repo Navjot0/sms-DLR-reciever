@@ -20,6 +20,7 @@ import com.smsframework.dlr.exception.DlrValidationException;
 import com.smsframework.dlr.mapper.DlrMapper;
 import com.smsframework.dlr.repository.DlrEventRepository;
 import com.smsframework.dlr.repository.DlrMessageStatusRepository;
+import com.smsframework.dlr.util.MessageIdParts;
 import com.smsframework.dlr.util.MobileMasker;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
@@ -185,6 +186,12 @@ public class DlrProcessingService {
             return reject(adapter.source(), peeked, rawForStorage, e.getReason(), false);
         }
 
+        // 4a. Multipart ids: "<message_id>:<part>" -> message_id + part_number (correlates with billing DLRs)
+        MessageIdParts.Parsed ids = MessageIdParts.parse(dlr.getMessageId(), properties.getMessageIdPartSeparator());
+        if (ids.hasPart()) {
+            dlr.providerMessageId(ids.original()).partNumber(ids.part()).messageId(ids.messageId());
+        }
+
         // 5. Idempotency + state machine (single DB transaction) --------------------------------------
         metrics.received(dlr.getSource());
         ProcessingResult result = tx.execute(status -> persist(dlr, rawForStorage));
@@ -266,6 +273,7 @@ public class DlrProcessingService {
 
     private ProcessingResult reject(String source, String messageId, String raw, String reason, boolean tooLarge) {
         String src = source == null ? UNKNOWN_SOURCE : source;
+        messageId = MessageIdParts.base(messageId, properties.getMessageIdPartSeparator());
         DlrEvent event = mapper.rejectedEvent(src, messageId, raw, reason, instanceId);
         long id = events.insert(event);
         String label = adapters.isKnownSource(src) ? src : UNKNOWN_SOURCE;

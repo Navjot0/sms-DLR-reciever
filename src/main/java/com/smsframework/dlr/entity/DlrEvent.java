@@ -15,6 +15,8 @@ public class DlrEvent {
     private Long id;
     private String source;
     private String messageId;
+    private String providerMessageId;
+    private Integer partNumber;
     private String externalMessageId;
     private String correlationId;
     private String campaignId;
@@ -50,6 +52,10 @@ public class DlrEvent {
     public void setSource(String source) { this.source = source; }
     public String getMessageId() { return messageId; }
     public void setMessageId(String messageId) { this.messageId = messageId; }
+    public String getProviderMessageId() { return providerMessageId; }
+    public void setProviderMessageId(String providerMessageId) { this.providerMessageId = providerMessageId; }
+    public Integer getPartNumber() { return partNumber; }
+    public void setPartNumber(Integer partNumber) { this.partNumber = partNumber; }
     public String getExternalMessageId() { return externalMessageId; }
     public void setExternalMessageId(String externalMessageId) { this.externalMessageId = externalMessageId; }
     public String getCorrelationId() { return correlationId; }

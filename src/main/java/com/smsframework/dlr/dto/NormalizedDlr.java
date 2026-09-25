@@ -12,6 +12,10 @@ public class NormalizedDlr {
 
     private String source;
     private String messageId;
+    /** Id exactly as the provider sent it, when it differs from messageId (e.g. "c9b2...:1"). */
+    private String providerMessageId;
+    /** Part number of a multipart SMS, from the "&lt;id&gt;:&lt;part&gt;" suffix. */
+    private Integer partNumber;
     private String externalMessageId;
     private String correlationId;
     private String campaignId;
@@ -39,6 +43,8 @@ public class NormalizedDlr {
 
     // Fluent setters -----------------------------------------------------
     public NormalizedDlr messageId(String v) { this.messageId = v; return this; }
+    public NormalizedDlr providerMessageId(String v) { this.providerMessageId = v; return this; }
+    public NormalizedDlr partNumber(Integer v) { this.partNumber = v; return this; }
     public NormalizedDlr externalMessageId(String v) { this.externalMessageId = v; return this; }
     public NormalizedDlr correlationId(String v) { this.correlationId = v; return this; }
     public NormalizedDlr campaignId(String v) { this.campaignId = v; return this; }
@@ -61,6 +67,8 @@ public class NormalizedDlr {
     // Getters ------------------------------------------------------------
     public String getSource() { return source; }
     public String getMessageId() { return messageId; }
+    public String getProviderMessageId() { return providerMessageId; }
+    public Integer getPartNumber() { return partNumber; }
     public String getExternalMessageId() { return externalMessageId; }
     public String getCorrelationId() { return correlationId; }
     public String getCampaignId() { return campaignId; }

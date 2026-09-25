@@ -12,6 +12,8 @@ public record DlrEventView(
         Long id,
         String source,
         String messageId,
+        String providerMessageId,
+        Integer partNumber,
         String externalMessageId,
         String correlationId,
         String mobile,

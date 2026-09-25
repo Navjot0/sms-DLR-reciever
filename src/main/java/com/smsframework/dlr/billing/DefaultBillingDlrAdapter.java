@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.exception.DlrValidationException;
+import com.smsframework.dlr.util.MessageIdParts;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import org.springframework.stereotype.Component;
@@ -32,11 +33,13 @@ public class DefaultBillingDlrAdapter implements BillingDlrAdapter {
     private final ObjectMapper mapper;
     private final Validator validator;
     private final DlrProperties.Billing config;
+    private final String partSeparator;
 
     public DefaultBillingDlrAdapter(ObjectMapper mapper, Validator validator, DlrProperties properties) {
         this.mapper = mapper.copy().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         this.validator = validator;
         this.config = properties.getBilling();
+        this.partSeparator = properties.getMessageIdPartSeparator();
     }
 
     @Override
@@ -121,19 +124,9 @@ public class DefaultBillingDlrAdapter implements BillingDlrAdapter {
         }
 
         String billingMessageId = r.getMessageId().trim();
-        String messageId = billingMessageId;
-        Integer part = null;
-        String sep = config.getMessageIdPartSeparator();
-        if (sep != null && !sep.isEmpty()) {
-            int at = billingMessageId.lastIndexOf(sep);
-            if (at > 0 && at + sep.length() < billingMessageId.length()) {
-                String suffix = billingMessageId.substring(at + sep.length());
-                if (suffix.chars().allMatch(Character::isDigit) && suffix.length() <= 6) {
-                    messageId = billingMessageId.substring(0, at);
-                    part = Integer.parseInt(suffix);
-                }
-            }
-        }
+        MessageIdParts.Parsed parsed = MessageIdParts.parse(billingMessageId, partSeparator);
+        String messageId = parsed.messageId();
+        Integer part = parsed.part();
 
         return new NormalizedBillingEvent(index, raw, messageId, billingMessageId, part,
                 r.getTransactionType().trim().toLowerCase(Locale.ROOT), blankToNull(r.getProduct()), units, salePrice,

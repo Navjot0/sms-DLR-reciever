@@ -416,7 +416,20 @@ For each SMS the gateway sends two callbacks to the same `POST /api/v1/dlr/recei
 | `message_id` | `9b1b0309-…` | Join key with the status DLR |
 | `part_number` | `1` | Multipart SMS: each part is billed separately |
 
-Only a numeric suffix after the last `:` is treated as a part number. `abc-123` or `urn:msg:abc` are kept unchanged. The separator is set by `dlr.billing.message-id-part-separator`.
+Only a numeric suffix after the last `:` is treated as a part number. `abc-123` or `urn:msg:abc` are kept unchanged. The separator is set by `dlr.message-id-part-separator`; an empty value disables splitting.
+
+**Status DLRs use the same rule.** For campaigns the gateway sends the status DLR as `"message_id": "<id>:1"` (often only for part 1) and the billing DLR as `<id>:1` … `<id>:4`. The status DLR is stored with:
+
+- `message_id`: `<id>`
+- `provider_message_id`: `<id>:1`
+- `part_number`: `1`
+
+Both DLRs therefore land on the same message.
+
+- **Lookups:** `GET /api/v1/dlr/<id>` and `GET /api/v1/dlr/<id>:1` return the same message. The second form adds `requested_id`. `POST /verify` accepts either form and reports each id as it was sent.
+- **Per-part status:** when parts are present, the response carries `"parts": [{"part": 1, "provider_message_id": "<id>:1", "provider_status": "DELIVRD", "status": "DELIVERED"}, …]`.
+- **State machine:** it applies per message. A second part with the same status is stored as `IGNORED`. An exact repeat of a part is a `DUPLICATE`.
+- **Existing rows:** migration `V3__multipart_message_ids.sql` moves rows stored earlier with `<id>:<part>` onto `<id>`.
 
 **Totals.** Per message, over `APPLIED` billing events: `units` and `total_amount` are **net**. Debit types (`debit`) add; credit types (`credit`, `refund`, `reversal`) subtract. Both lists are configurable. `debit_amount` and `credit_amount` are also returned. `currency` is `MIXED` if events disagree.
 
@@ -462,7 +475,7 @@ When nothing has been billed, this is `{"billed": false, "events": 0}`.
 
 ## Database
 
-The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`).
+The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`, `V3__multipart_message_ids.sql`, which adds `provider_message_id` and `part_number` to `dlr_events`).
 
 - `dlr_events` has the columns you specified: `id`, `source`, `message_id`, `external_message_id`, `correlation_id`, `mobile`, `sender`, `service`, `provider_status`, `normalized_status`, `status_code`, `error_code`, `error_reason`, `submit_at`, `dlr_received_at`, `entity_id`, `template_id`, `units`, `raw_payload JSONB NOT NULL`, `processing_status`, `created_at`, `updated_at`. It adds `campaign_id`, `request_id`, `provider_event_id`, `rejection_reason`, `processing_note`, `dedup_key`, `duplicate_of` and `receiver_instance`.
   - `message_id` may be `NULL` **only** for `REJECTED` rows. A `CHECK` constraint enforces this, so a callback missing its id can still be stored.
@@ -622,6 +635,7 @@ DLR_TEST_DB_URL=jdbc:postgresql://dbhost:5432/dlr_test DLR_TEST_DB_USERNAME=dlr 
 | `DefaultBillingDlrAdapterTest` | Exact normalization of the reference billing payload, `<id>:<part>` parsing, numeric strings and decimals, per-event and whole-callback validation |
 | `DlrBillingIntegrationTest` | Status + billing correlated by message_id (exact column assertions), billing before status, multipart sums, refunds, duplicates (incl. `1` vs `1.0`), 30 concurrent identical callbacks, partial batches, rejected callbacks, `require_billing` verification, metrics |
 | `DlrFlatPayloadAndReprocessIntegrationTest` | Live-gateway flat payload with no source header, `//api/...` URLs, message id kept on unrecognised payloads, single and bulk reprocessing of rejected rows (idempotent, no loops, non-JSON rows skipped) |
+| `DlrMultipartIntegrationTest` | Status DLR `<id>:1` + 4-part billing correlate (lookup by `<id>` or `<id>:1`, verify with `require_billing`), per-part statuses, part duplicates, V3 backfill of old rows, ids without numeric suffix untouched |
 | `DlrSecurityIntegrationTest` | Authentication enforced end to end; refused callbacks are not stored |
 | `DlrBulkIntegrationTest` | 1 / 100 / 1,000 / 10,000 DLRs over HTTP, 48 at a time, mixed providers and statuses, progressions, duplicates and multipart billing DLRs. Every message's status, mobile, correlation id and billed units and amount are checked against the database |
 

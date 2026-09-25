@@ -31,6 +31,8 @@ public class DlrMapper {
         DlrEvent e = new DlrEvent();
         e.setSource(d.getSource());
         e.setMessageId(d.getMessageId());
+        e.setProviderMessageId(d.getProviderMessageId());
+        e.setPartNumber(d.getPartNumber());
         e.setExternalMessageId(d.getExternalMessageId());
         e.setCorrelationId(d.getCorrelationId());
         e.setCampaignId(d.getCampaignId());
@@ -99,12 +101,15 @@ public class DlrMapper {
                 null,
                 null,
                 null,
+                null,
+                null,
                 null);
     }
 
     public DlrEventView toEventView(DlrEvent e) {
         return new DlrEventView(
-                e.getId(), e.getSource(), e.getMessageId(), e.getExternalMessageId(), e.getCorrelationId(),
+                e.getId(), e.getSource(), e.getMessageId(), e.getProviderMessageId(), e.getPartNumber(),
+                e.getExternalMessageId(), e.getCorrelationId(),
                 e.getMobile(), e.getProviderStatus(), e.getNormalizedStatus(), e.getStatusCode(), e.getErrorCode(),
                 e.getErrorReason(), e.getDlrReceivedAt(), e.getUnits(),
                 e.getProcessingStatus() == null ? null : e.getProcessingStatus().name(),

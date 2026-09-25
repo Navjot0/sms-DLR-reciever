@@ -37,7 +37,16 @@ public record DlrStatusResponse(
         Integer rejectedEvents,
         String lastRejectionReason,
         /* Billing DLR summary. Always present once a status DLR is received; otherwise only when billed. */
-        BillingSummary billing) {
+        BillingSummary billing,
+        /* Multipart SMS: latest status per part ("<message_id>:<part>" DLRs). Absent for single-part ids. */
+        List<PartStatus> parts,
+        /* The id used in the request when it differs from message_id (e.g. "c9b2...:1" -> "c9b2..."). */
+        String requestedId) {
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record PartStatus(int part, String providerMessageId, String providerStatus, String status,
+                             String statusCode) {
+    }
 
     public static DlrStatusResponse notReceived(String messageId) {
         return notReceived(messageId, null, null);
@@ -46,20 +55,27 @@ public record DlrStatusResponse(
     public static DlrStatusResponse notReceived(String messageId, Integer rejectedEvents, String lastRejectionReason) {
         return new DlrStatusResponse(messageId, null, false, null, "PENDING", null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                rejectedEvents, lastRejectionReason, null);
+                rejectedEvents, lastRejectionReason, null, null, null);
     }
 
     public DlrStatusResponse withEvents(List<DlrEventView> ev) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, ev,
-                rejectedEvents, lastRejectionReason, billing);
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId);
     }
 
     public DlrStatusResponse withBilling(BillingSummary b) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, b);
+                rejectedEvents, lastRejectionReason, b, parts, requestedId);
+    }
+
+    public DlrStatusResponse withParts(List<PartStatus> p, String requested) {
+        return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
+                errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
+                requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
+                rejectedEvents, lastRejectionReason, billing, p, requested);
     }
 }
