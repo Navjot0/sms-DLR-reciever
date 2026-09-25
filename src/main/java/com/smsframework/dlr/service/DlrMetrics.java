@@ -34,7 +34,8 @@ public class DlrMetrics {
         counter("rejected", "UNKNOWN").increment(0);
         for (String source : adapters.sources()) {
             for (String name : new String[]{"billing.received", "billing.applied", "billing.duplicate",
-                    "billing.rejected", "billing.units"}) {
+                    "billing.rejected", "billing.units", "click.received", "click.applied", "click.duplicate",
+                    "click.rejected"}) {
                 counter(name, source).increment(0);
             }
         }
@@ -86,6 +87,18 @@ public class DlrMetrics {
             case "DUPLICATE" -> counter("billing.duplicate", source).increment();
             default -> counter("billing.rejected", source).increment();
         }
+    }
+
+    /** Short-link clicks: dlr_click_received_total, dlr_click_applied_total, dlr_click_duplicate_total. */
+    public void clickEvent(String source, String processingStatus) {
+        counter("click.received", source).increment();
+        counter("DUPLICATE".equals(processingStatus) ? "click.duplicate" : "click.applied", source).increment();
+    }
+
+    /** Invalid click callback (stored in dlr_events as REJECTED): dlr_click_rejected_total. */
+    public void clickRejected(String source) {
+        counter("click.received", source).increment();
+        counter("click.rejected", source).increment();
     }
 
     public void authFailed(String mechanism) {

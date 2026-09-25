@@ -2,6 +2,7 @@ package com.smsframework.dlr.controller;
 
 import com.smsframework.dlr.billing.BillingDetailsResponse;
 import com.smsframework.dlr.billing.BillingEventView;
+import com.smsframework.dlr.click.ClickDetailsResponse;
 import com.smsframework.dlr.domain.ProcessingStatus;
 import com.smsframework.dlr.dto.DlrEventView;
 import com.smsframework.dlr.dto.DlrStatusResponse;
@@ -50,6 +51,12 @@ public class DlrQueryController {
     @GetMapping("/{messageId}/billing")
     public BillingDetailsResponse billing(@PathVariable String messageId) {
         return queryService.billingDetails(messageId);
+    }
+
+    /** Short-link clicks recorded for a message, with the click summary. */
+    @GetMapping("/{messageId}/clicks")
+    public ClickDetailsResponse clicks(@PathVariable String messageId) {
+        return queryService.clickDetails(messageId);
     }
 
     /** Bulk verification for automation. */

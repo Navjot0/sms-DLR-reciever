@@ -59,6 +59,18 @@ public final class TestPayloads {
              "message_id": "664f1ac5-3f1b-4a2b-b9e3-08c89b13b8a4", "template_id": "1507166245188685280",
              "correlation_id": null, "dlr_received_at": "2026-09-25 17:43:10"}""";
 
+    /** Short-link click event exactly as received from the link service. */
+    public static final String CLICK_EXAMPLE = """
+            {"event":"short_link","url_type":"dynamic","received_at":"2026-09-25 23:27:25",
+             "data":{"visited_count":2,"url_type":"dynamic","contact":"919177873237","url_key":"ZIO7ER",
+              "short_url":"stqa.gtls.in/DUMMY/bBz/ZIO7ER","destination_url":"https://login.microsoftonline.com/common/login",
+              "channel":"sms","ip_address":"152.58.121.146","operating_system":"Windows","operating_system_version":"10",
+              "browser":"Chrome","browser_version":"153","device_type":"desktop","clicked_at":"2026-09-25 23:27:24",
+              "message_id":"68c3d2ef-9ced-46b8-aa1c-13be73ad9321:1","correlation_id":""}}""";
+
+    /** Second click (escaped slashes, as the service sends them). */
+    public static final String CLICK_EXAMPLE_2 = "{\"event\":\"short_link\",\"url_type\":\"dynamic\",\"received_at\":\"2026-09-25 23:30:27\",\"data\":{\"visited_count\":3,\"url_type\":\"dynamic\",\"contact\":\"919177873237\",\"url_key\":\"ZIO7ER\",\"short_url\":\"stqa.gtls.in\\/DUMMY\\/bBz\\/ZIO7ER\",\"destination_url\":\"https:\\/\\/login.microsoftonline.com\\/common\\/login\",\"channel\":\"sms\",\"ip_address\":\"152.58.121.146\",\"operating_system\":\"Windows\",\"operating_system_version\":\"10\",\"browser\":\"Chrome\",\"browser_version\":\"153\",\"device_type\":\"desktop\",\"clicked_at\":\"2026-09-25 23:30:25\",\"message_id\":\"68c3d2ef-9ced-46b8-aa1c-13be73ad9321:1\",\"correlation_id\":\"\"}}";
+
     public static final String BILLING_EXAMPLE = """
             {
               "event_type": "billing",

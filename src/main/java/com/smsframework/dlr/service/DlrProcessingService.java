@@ -9,6 +9,10 @@ import com.smsframework.dlr.billing.BillingDlrAdapter;
 import com.smsframework.dlr.billing.BillingProcessingService;
 import com.smsframework.dlr.billing.BillingResult;
 import com.smsframework.dlr.billing.NormalizedBillingEvent;
+import com.smsframework.dlr.click.ClickProcessingService;
+import com.smsframework.dlr.click.ClickResult;
+import com.smsframework.dlr.click.NormalizedClickEvent;
+import com.smsframework.dlr.click.ShortLinkClickAdapter;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.NormalizedStatus;
 import com.smsframework.dlr.domain.ProcessingStatus;
@@ -54,7 +58,12 @@ public class DlrProcessingService {
     /** Outcome of one callback, returned to the controller (and to the provider as an ack). */
     public record ProcessingResult(Long eventId, String source, String messageId, ProcessingStatus processingStatus,
                                    NormalizedStatus normalizedStatus, String currentStatus, String rejectionReason,
-                                   String note, boolean payloadTooLarge, BillingResult billing) {
+                                   String note, boolean payloadTooLarge, BillingResult billing, ClickResult click) {
+
+        /** True when this callback was a short-link click event (see {@link #click()}). */
+        public boolean isClick() {
+            return click != null;
+        }
 
         /** True when this callback was a billing DLR (see {@link #billing()}). */
         public boolean isBilling() {
@@ -76,13 +85,18 @@ public class DlrProcessingService {
     private final String instanceId;
     private final List<BillingDlrAdapter> billingAdapters;
     private final BillingProcessingService billingService;
+    private final ShortLinkClickAdapter clickAdapter;
+    private final ClickProcessingService clickService;
 
     public DlrProcessingService(DlrAdapterRegistry adapters, SourceResolver sourceResolver,
                                 DedupKeyGenerator dedupKeyGenerator, DlrStateMachine stateMachine,
                                 DlrEventRepository events, DlrMessageStatusRepository statuses, DlrMapper mapper,
                                 DlrMetrics metrics, TransactionTemplate tx, ObjectMapper objectMapper,
                                 DlrProperties properties, List<BillingDlrAdapter> billingAdapters,
-                                BillingProcessingService billingService) {
+                                BillingProcessingService billingService, ShortLinkClickAdapter clickAdapter,
+                                ClickProcessingService clickService) {
+        this.clickAdapter = clickAdapter;
+        this.clickService = clickService;
         this.billingAdapters = List.copyOf(billingAdapters);
         this.billingService = billingService;
         this.adapters = adapters;
@@ -159,7 +173,12 @@ public class DlrProcessingService {
                     + " (supported: " + adapters.sources() + ")", false);
         }
 
-        // 3a. Billing DLR ({"event_type":"billing","events":[...]}) -----------------------------------
+        // 3a. Short-link click ({"event":"short_link","data":{...}}) ----------------------------------
+        if (clickAdapter.isClickPayload(json)) {
+            return processClick(explicitSource, json, rawForStorage);
+        }
+
+        // 3b. Billing DLR ({"event_type":"billing","events":[...]}) -----------------------------------
         Optional<BillingDlrAdapter> billingAdapter = billingAdapters.stream().filter(b -> b.isBillingPayload(json)).findFirst();
         if (billingAdapter.isPresent()) {
             return processBilling(billingAdapter.get(), explicitSource, json, rawForStorage);
@@ -250,6 +269,25 @@ public class DlrProcessingService {
         }
     }
 
+    private ProcessingResult processClick(String explicitSource, JsonNode json, String raw) {
+        String source = explicitSource != null ? explicitSource : properties.getClicks().getDefaultSource();
+        if (!clickAdapter.acceptsSource(source)) {
+            return reject(source, clickAdapter.peekMessageId(json), raw, "click events are not accepted from source "
+                    + source + " (allowed: " + properties.getClicks().getSources() + ")", false);
+        }
+        NormalizedClickEvent click;
+        try {
+            click = clickAdapter.normalize(json);
+        } catch (DlrValidationException e) {
+            metrics.clickRejected(source);
+            return reject(source, clickAdapter.peekMessageId(json), raw, "short_link: " + e.getReason(), false);
+        }
+        ClickResult cr = clickService.process(source, click, raw, instanceId);
+        ProcessingStatus ps = "DUPLICATE".equals(cr.processingStatus()) ? ProcessingStatus.DUPLICATE : ProcessingStatus.APPLIED;
+        return new ProcessingResult(cr.eventId(), source, click.messageId(), ps, null, null, null, cr.note(), false,
+                null, cr);
+    }
+
     private ProcessingResult processBilling(BillingDlrAdapter adapter, String explicitSource, JsonNode json, String raw) {
         String source = explicitSource != null ? explicitSource : properties.getBilling().getDefaultSource();
         if (!adapter.acceptsSource(source)) {
@@ -268,7 +306,7 @@ public class DlrProcessingService {
             case "DUPLICATE" -> ProcessingStatus.DUPLICATE;
             default -> ProcessingStatus.APPLIED;
         };
-        return new ProcessingResult(null, source, null, overall, null, null, null, null, false, br);
+        return new ProcessingResult(null, source, null, overall, null, null, null, null, false, br, null);
     }
 
     private ProcessingResult reject(String source, String messageId, String raw, String reason, boolean tooLarge) {
@@ -287,12 +325,12 @@ public class DlrProcessingService {
         log.warn("DLR rejected source={} message_id={} processing_status=REJECTED event_id={} reason=\"{}\"",
                 src, messageId, id, reason);
         return new ProcessingResult(id, event.getSource(), messageId, ProcessingStatus.REJECTED, null, null, reason,
-                null, tooLarge, null);
+                null, tooLarge, null, null);
     }
 
     private ProcessingResult result(Long eventId, NormalizedDlr dlr, ProcessingStatus ps, String currentStatus, String note) {
         return new ProcessingResult(eventId, dlr.getSource(), dlr.getMessageId(), ps, dlr.getNormalizedStatus(),
-                currentStatus, null, note, false, null);
+                currentStatus, null, note, false, null, null);
     }
 
     private void recordMetricsAndLog(NormalizedDlr dlr, ProcessingResult r) {

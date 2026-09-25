@@ -10,12 +10,19 @@ import java.util.List;
  *   <li>expected_status (optional): each result carries "matched"; the summary carries "matched"/"all_matched".</li>
  *   <li>require_billing (optional, default false): a message only counts as matched when a billing DLR was also
  *       received for it.</li>
+ *   <li>require_click (optional, default false): a message only counts as matched when at least one short-link
+ *       click was recorded for it.</li>
  * </ul>
  */
 public record DlrVerificationRequest(
         @NotEmpty(message = "message_ids must not be empty") List<String> messageIds,
         String expectedStatus,
-        Boolean requireBilling) {
+        Boolean requireBilling,
+        Boolean requireClick) {
+
+    public boolean clickRequired() {
+        return Boolean.TRUE.equals(requireClick);
+    }
 
     public boolean billingRequired() {
         return Boolean.TRUE.equals(requireBilling);

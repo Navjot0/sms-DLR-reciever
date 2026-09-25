@@ -48,6 +48,8 @@ public class DlrProperties {
 
     private final Billing billing = new Billing();
 
+    private final Clicks clicks = new Clicks();
+
     // ------------------------------------------------------------------
 
     public static Map<String, List<String>> defaultStatusMapping() {
@@ -141,6 +143,26 @@ public class DlrProperties {
         public void setRejectedHttpStatus(int rejectedHttpStatus) { this.rejectedHttpStatus = rejectedHttpStatus; }
         public int getMaxEventsPageSize() { return maxEventsPageSize; }
         public void setMaxEventsPageSize(int maxEventsPageSize) { this.maxEventsPageSize = maxEventsPageSize; }
+    }
+
+    public static class Clicks {
+        /** Accept short-link click events ({"event":"short_link","data":{...}}) on /api/v1/dlr/receive. */
+        private boolean enabled = true;
+        /** Values of "event" that mark a click callback (case-insensitive). */
+        private List<String> eventTypes = new ArrayList<>(List.of("short_link"));
+        /** Source recorded when the callback carries no X-DLR-Source. */
+        private String defaultSource = "DEFAULT_SMS";
+        /** Sources allowed to send click events. */
+        private List<String> sources = new ArrayList<>(List.of("DEFAULT_SMS"));
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public List<String> getEventTypes() { return eventTypes; }
+        public void setEventTypes(List<String> eventTypes) { this.eventTypes = eventTypes; }
+        public String getDefaultSource() { return defaultSource; }
+        public void setDefaultSource(String defaultSource) { this.defaultSource = defaultSource; }
+        public List<String> getSources() { return sources; }
+        public void setSources(List<String> sources) { this.sources = sources; }
     }
 
     public static class Billing {
@@ -296,4 +318,5 @@ public class DlrProperties {
     public Api getApi() { return api; }
     public Security getSecurity() { return security; }
     public Billing getBilling() { return billing; }
+    public Clicks getClicks() { return clicks; }
 }

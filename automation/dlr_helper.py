@@ -93,13 +93,15 @@ def wait_for_dlr(message_id: str, expected_status: str, timeout: float = 120, po
 
 
 def verify_dlrs(message_ids: Iterable[str], expected_status: str | None = None, require_billing: bool = False,
-                base_url: str = DLR_BASE_URL) -> dict:
+                require_click: bool = False, base_url: str = DLR_BASE_URL) -> dict:
     """One call to POST /api/v1/dlr/verify."""
     body: dict = {"message_ids": list(message_ids)}
     if expected_status:
         body["expected_status"] = expected_status.upper()
     if require_billing:
         body["require_billing"] = True
+    if require_click:
+        body["require_click"] = True
     response = _session.post(f"{base_url}/api/v1/dlr/verify", json=body, timeout=60)
     response.raise_for_status()
     return response.json()
@@ -132,6 +134,29 @@ def wait_for_dlrs(message_ids: Iterable[str], expected_status: str, timeout: flo
         f"{' with billing' if require_billing else ''} within {timeout}s "
         f"(received={result.get('received')}, missing={result.get('missing')}, "
         f"billing_missing={result.get('billing_missing')}); first pending: {pending[:10]}")
+
+
+def get_clicks(message_id: str, base_url: str = DLR_BASE_URL) -> dict:
+    """Short-link click summary + click events for a message (GET /api/v1/dlr/{id}/clicks)."""
+    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/clicks", timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def wait_for_click(message_id: str, min_clicks: int = 1, url_key: str | None = None, timeout: float = 120,
+                   poll_interval: float = 2, base_url: str = DLR_BASE_URL) -> dict:
+    """Poll until at least ``min_clicks`` short-link clicks (optionally on ``url_key``) are recorded."""
+    deadline = time.monotonic() + timeout
+    summary: dict = {}
+    while time.monotonic() < deadline:
+        summary = get_clicks(message_id, base_url=base_url)["clicks"]
+        if summary.get("clicked") and summary.get("clicks", 0) >= min_clicks and (
+                url_key is None or url_key in (summary.get("url_keys") or [])):
+            return summary
+        time.sleep(poll_interval)
+    raise DlrVerificationError(
+        f"Expected >= {min_clicks} click(s){' on ' + url_key if url_key else ''} for message_id={message_id} "
+        f"within {timeout}s; last clicks: {summary}")
 
 
 def get_billing(message_id: str, base_url: str = DLR_BASE_URL) -> dict:
@@ -219,6 +244,21 @@ def send_billing_dlr(message_id: str, parts: int = 1, amount_per_part: str = "1"
     } for part in range(1, parts + 1)]
     response = _session.post(f"{base_url}/api/v1/dlr/receive", json={"event_type": "billing", "events": events},
                              headers={"X-DLR-Source": "DEFAULT_SMS", **(headers or {})}, timeout=10)
+    return SimulatedDlr(message_id, response.status_code)
+
+
+def send_click_event(message_id: str, url_key: str = "ZIO7ER", visited_count: int = 1,
+                     contact: str = "919177873237", clicked_at: str | None = None,
+                     base_url: str = DLR_BASE_URL) -> SimulatedDlr:
+    """Simulates the link service's short-link click callback."""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    payload = {"event": "short_link", "url_type": "dynamic", "received_at": now, "data": {
+        "visited_count": visited_count, "url_type": "dynamic", "contact": contact, "url_key": url_key,
+        "short_url": f"stqa.gtls.in/DUMMY/bBz/{url_key}", "destination_url": "https://example.com/landing",
+        "channel": "sms", "ip_address": "152.58.121.146", "operating_system": "Windows",
+        "operating_system_version": "10", "browser": "Chrome", "browser_version": "153", "device_type": "desktop",
+        "clicked_at": clicked_at or now, "message_id": message_id, "correlation_id": ""}}
+    response = _session.post(f"{base_url}/api/v1/dlr/receive", json=payload, timeout=10)
     return SimulatedDlr(message_id, response.status_code)
 
 

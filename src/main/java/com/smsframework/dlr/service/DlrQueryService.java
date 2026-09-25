@@ -5,6 +5,9 @@ import com.smsframework.dlr.billing.BillingEventView;
 import com.smsframework.dlr.billing.BillingProcessingService;
 import com.smsframework.dlr.billing.BillingSummary;
 import com.smsframework.dlr.billing.DlrBillingRepository;
+import com.smsframework.dlr.click.ClickDetailsResponse;
+import com.smsframework.dlr.click.ClickSummary;
+import com.smsframework.dlr.click.DlrClickRepository;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.NormalizedStatus;
 import com.smsframework.dlr.domain.ProcessingStatus;
@@ -39,10 +42,12 @@ public class DlrQueryService {
     private final DlrProperties properties;
     private final DlrBillingRepository billing;
     private final BillingProcessingService billingService;
+    private final DlrClickRepository clicks;
 
     public DlrQueryService(DlrMessageStatusRepository statuses, DlrEventRepository events, DlrMapper mapper,
                            DlrProperties properties, DlrBillingRepository billing,
-                           BillingProcessingService billingService) {
+                           BillingProcessingService billingService, DlrClickRepository clicks) {
+        this.clicks = clicks;
         this.billing = billing;
         this.billingService = billingService;
         this.statuses = statuses;
@@ -59,15 +64,17 @@ public class DlrQueryService {
         String messageId = normalizeId(requestedId);
         String requested = messageId.equals(requestedId) ? null : requestedId;
         BillingSummary summary = billingSummary(messageId);
+        ClickSummary clickSummary = clickSummary(messageId);
         List<DlrStatusResponse.PartStatus> parts = partStatuses(messageId);
         DlrStatusResponse response = statuses.findByMessageId(messageId)
                 .map(s -> {
-                    DlrStatusResponse r = mapper.toStatusResponse(s).withBilling(summary);
+                    DlrStatusResponse r = mapper.toStatusResponse(s).withBilling(summary).withClicks(clickSummary);
                     return includeEvents ? r.withEvents(eventViews(messageId)) : r;
                 })
                 .orElseGet(() -> {
                     DlrStatusResponse r = notReceived(messageId, includeEvents);
-                    return summary.billed() ? r.withBilling(summary) : r;
+                    r = summary.billed() ? r.withBilling(summary) : r;
+                    return clickSummary.clicked() ? r.withClicks(clickSummary) : r;
                 });
         return parts.isEmpty() && requested == null ? response : response.withParts(parts.isEmpty() ? null : parts, requested);
     }
@@ -86,6 +93,16 @@ public class DlrQueryService {
     public BillingSummary billingSummary(String messageId) {
         return billing.summarize(List.of(messageId), billingService.debitTypes(), billingService.creditTypes())
                 .getOrDefault(messageId, BillingSummary.NOT_BILLED);
+    }
+
+    public ClickSummary clickSummary(String messageId) {
+        return clicks.summarize(List.of(messageId)).getOrDefault(messageId, ClickSummary.NOT_CLICKED);
+    }
+
+    public ClickDetailsResponse clickDetails(String requestedId) {
+        String messageId = normalizeId(requestedId);
+        return new ClickDetailsResponse(messageId, clickSummary(messageId),
+                clicks.findByMessageId(messageId, properties.getApi().getMaxEventsPageSize()));
     }
 
     public BillingDetailsResponse billingDetails(String requestedId) {
@@ -149,23 +166,30 @@ public class DlrQueryService {
         Map<String, DlrMessageStatus> found = statuses.findByMessageIds(unique).stream()
                 .collect(Collectors.toMap(DlrMessageStatus::getMessageId, Function.identity()));
         Map<String, BillingSummary> billed = billing.summarize(unique, billingService.debitTypes(), billingService.creditTypes());
+        Map<String, ClickSummary> clickMap = clicks.summarize(unique);
         boolean requireBilling = request.billingRequired();
-        boolean matching = expected != null || requireBilling;
+        boolean requireClick = request.clickRequired();
+        boolean matching = expected != null || requireBilling || requireClick;
 
         int received = 0, delivered = 0, failed = 0, expired = 0, rejected = 0, sent = 0, unknown = 0, missing = 0, matched = 0;
-        int billedCount = 0;
+        int billedCount = 0, clickedCount = 0;
         List<DlrVerificationResponse.Result> results = new ArrayList<>(ids.size());
         for (String id : ids) {
             DlrMessageStatus s = found.get(normalizeId(id));
             BillingSummary b = billed.get(normalizeId(id));
+            ClickSummary c = clickMap.get(normalizeId(id));
             if (b != null) {
                 billedCount++;
+            }
+            if (c != null) {
+                clickedCount++;
             }
             if (s == null) {
                 missing++;
                 results.add(new DlrVerificationResponse.Result(id, false, "PENDING", null, null, null, null,
                         b != null, b == null ? null : b.units(), b == null ? null : b.totalAmount(),
-                        b == null ? null : b.currency(), matching ? Boolean.FALSE : null));
+                        b == null ? null : b.currency(), c != null, c == null ? null : c.clicks(),
+                        matching ? Boolean.FALSE : null));
                 continue;
             }
             received++;
@@ -178,18 +202,20 @@ public class DlrQueryService {
                 case SENT -> sent++;
                 case UNKNOWN -> unknown++;
             }
-            Boolean isMatch = matching ? (expected == null || st == expected) && (!requireBilling || b != null) : null;
+            Boolean isMatch = matching ? (expected == null || st == expected) && (!requireBilling || b != null)
+                    && (!requireClick || c != null) : null;
             if (Boolean.TRUE.equals(isMatch)) {
                 matched++;
             }
             results.add(new DlrVerificationResponse.Result(id, true, st.name(), s.getProviderStatus(),
                     s.getStatusCode(), s.getSource(), s.getCorrelationId(), b != null,
                     b == null ? null : b.units(), b == null ? null : b.totalAmount(), b == null ? null : b.currency(),
-                    isMatch));
+                    c != null, c == null ? null : c.clicks(), isMatch));
         }
         return new DlrVerificationResponse(ids.size(), received, delivered, failed, expired, rejected, sent, unknown,
-                missing, billedCount, ids.size() - billedCount, expected == null ? null : expected.name(),
-                requireBilling ? Boolean.TRUE : null, matching ? matched : null,
+                missing, billedCount, ids.size() - billedCount, clickedCount, ids.size() - clickedCount,
+                expected == null ? null : expected.name(), requireBilling ? Boolean.TRUE : null,
+                requireClick ? Boolean.TRUE : null, matching ? matched : null,
                 matching ? matched == ids.size() : null, results);
     }
 }

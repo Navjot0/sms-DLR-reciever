@@ -49,6 +49,9 @@ public class DlrReceiverController {
         String explicitSource = sourceResolver.resolveExplicit(request);
         ProcessingResult r = processingService.process(explicitSource, body);
 
+        if (r.isClick()) {
+            return ResponseEntity.ok(r.click());
+        }
         if (r.isBilling()) {
             // Billing callback: per-event outcomes. 400 only when every event was rejected.
             HttpStatus status = "REJECTED".equals(r.billing().processingStatus())

@@ -9,7 +9,8 @@ Note: the tests never assert on the callback's HTTP status. They verify the pers
 """
 import pytest
 
-from dlr_helper import (DlrVerificationError, get_billing, get_dlr, new_message_id, send_billing_dlr,
+from dlr_helper import (DlrVerificationError, get_billing, get_dlr, new_message_id, send_billing_dlr, send_click_event,
+                        wait_for_click, verify_dlrs,
                         send_default_sms_dlr, send_raw_dlr, send_webengage_dlr, wait_for_billing, wait_for_dlr,
                         wait_for_dlrs)
 
@@ -141,3 +142,18 @@ def test_missing_billing_is_reported():
         wait_for_billing(message_id, timeout=2, poll_interval=0.5)
     with pytest.raises(DlrVerificationError, match="billing_missing=1"):
         wait_for_dlrs([message_id], expected_status="DELIVERED", require_billing=True, timeout=2, poll_interval=0.5)
+
+
+# ------------------------------------------------------------------ short-link clicks
+
+def test_short_link_clicks_are_counted_per_message():
+    message_id = create_sms()
+    send_default_sms_dlr(message_id, status="DELIVRD")
+    send_click_event(f"{message_id}:1", visited_count=1, clicked_at="2026-09-25 23:27:24")
+    send_click_event(f"{message_id}:1", visited_count=2, clicked_at="2026-09-25 23:30:25")
+    send_click_event(f"{message_id}:1", visited_count=2, clicked_at="2026-09-25 23:30:25")   # resent -> duplicate
+
+    clicks = wait_for_click(message_id, min_clicks=2, url_key="ZIO7ER", timeout=30, poll_interval=0.5)
+    assert clicks["clicks"] == 2
+    assert clicks["visited_count"] == 2
+    assert verify_dlrs([message_id], require_click=True)["all_matched"] is True

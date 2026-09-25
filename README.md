@@ -20,6 +20,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [State transitions and out-of-order DLRs](#state-transitions-and-out-of-order-dlrs)
 - [Validation and rejected DLRs](#validation-and-rejected-dlrs)
 - [Billing DLRs](#billing-dlrs)
+- [Short-link click events](#short-link-click-events)
 - [Database](#database)
 - [Security](#security)
 - [Logging](#logging)
@@ -174,6 +175,7 @@ Dockerfile, docker-compose.yml, .env.example
 | `POST` | `/api/v1/dlr/verify` | Bulk verification for automation |
 | `GET` | `/api/v1/dlr/{messageId}/events` | Every callback for a message, with raw payloads |
 | `GET` | `/api/v1/dlr/{messageId}/billing` | Billing summary and every billing event for a message |
+| `GET` | `/api/v1/dlr/{messageId}/clicks` | Short-link click summary and every click event for a message |
 | `GET` | `/api/v1/dlr/search?correlation_id=…` or `?external_message_id=…` | Lookup by secondary keys |
 | `GET` | `/api/v1/dlr/events/rejected?limit=50` | Most recent rejected callbacks |
 | `GET` | `/api/v1/dlr/events/billing/rejected?limit=50` | Most recent rejected billing events |
@@ -473,9 +475,50 @@ When nothing has been billed, this is `{"billed": false, "events": 0}`.
 
 ---
 
+## Short-link click events
+
+When a recipient opens a short link in the SMS, the link service posts a click event to the same `POST /api/v1/dlr/receive` endpoint:
+
+```json
+{"event": "short_link", "url_type": "dynamic", "received_at": "2026-09-25 23:27:25",
+ "data": {"visited_count": 2, "contact": "919177873237", "url_key": "ZIO7ER",
+          "short_url": "stqa.gtls.in/DUMMY/bBz/ZIO7ER", "destination_url": "https://login.microsoftonline.com/common/login",
+          "channel": "sms", "ip_address": "152.58.121.146", "operating_system": "Windows", "browser": "Chrome",
+          "device_type": "desktop", "clicked_at": "2026-09-25 23:27:24",
+          "message_id": "68c3d2ef-9ced-46b8-aa1c-13be73ad9321:1", "correlation_id": ""}}
+```
+
+**Detection and storage.** A body whose `event` is `short_link` (configurable: `dlr.clicks.event-types`) is a click. It never changes the delivery state. `X-DLR-Source` is optional, and the default source is `DEFAULT_SMS`. Each click becomes one row in `dlr_click_events` (migration `V4`), holding every field above plus the raw payload. `message_id` is stored without the `:<part>` suffix (the original is kept in `provider_message_id`), so clicks correlate with the status and billing DLRs.
+
+**Every click counts once.** `visited_count` 2, then 3, gives two events. A resent identical callback is stored as `DUPLICATE`. The dedup key covers message id, `url_key`, `clicked_at`, `visited_count` and `ip_address`.
+
+**Validation.** Required: `event`, `data`, `data.message_id` and `data.url_key`. An invalid click is stored in `dlr_events` as `REJECTED`, for example `short_link: data.url_key is missing`.
+
+**In the query APIs.**
+
+`GET /api/v1/dlr/{id}` (with the base id or `…:1`) includes:
+
+```json
+"clicks": {"clicked": true, "clicks": 2, "visited_count": 3, "unique_ips": 1, "url_keys": ["ZIO7ER"],
+           "first_clicked_at": "2026-09-25T23:27:24", "last_clicked_at": "2026-09-25T23:30:25",
+           "last_destination_url": "https://login.microsoftonline.com/common/login", "last_device_type": "desktop"}
+```
+
+In that block, `clicks` counts the click callbacks received, while `visited_count` is the highest counter the link service reported. When nothing has been clicked, the block is `{"clicked": false, "clicks": 0}`.
+
+`GET /api/v1/dlr/{id}/clicks` returns the summary plus every click event with its raw payload.
+
+`POST /api/v1/dlr/verify` always reports `clicked` and `click_missing`, and each result carries `clicked` and `click_count`. With `"require_click": true`, a message only counts as `matched` once it has been clicked.
+
+**Pytest helpers.** `wait_for_click(message_id, min_clicks=1, url_key=None)`, `get_clicks(message_id)`, `verify_dlrs(..., require_click=True)` and the simulator `send_click_event(...)`.
+
+**Metrics.** `dlr_click_received_total`, `dlr_click_applied_total`, `dlr_click_duplicate_total` and `dlr_click_rejected_total`.
+
+---
+
 ## Database
 
-The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`, `V3__multipart_message_ids.sql`, which adds `provider_message_id` and `part_number` to `dlr_events`).
+The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`, `V3__multipart_message_ids.sql`, which adds `provider_message_id` and `part_number` to `dlr_events`, and `V4__create_dlr_click_events.sql`).
 
 - `dlr_events` has the columns you specified: `id`, `source`, `message_id`, `external_message_id`, `correlation_id`, `mobile`, `sender`, `service`, `provider_status`, `normalized_status`, `status_code`, `error_code`, `error_reason`, `submit_at`, `dlr_received_at`, `entity_id`, `template_id`, `units`, `raw_payload JSONB NOT NULL`, `processing_status`, `created_at`, `updated_at`. It adds `campaign_id`, `request_id`, `provider_event_id`, `rejection_reason`, `processing_note`, `dedup_key`, `duplicate_of` and `receiver_instance`.
   - `message_id` may be `NULL` **only** for `REJECTED` rows. A `CHECK` constraint enforces this, so a callback missing its id can still be stored.
@@ -636,6 +679,7 @@ DLR_TEST_DB_URL=jdbc:postgresql://dbhost:5432/dlr_test DLR_TEST_DB_USERNAME=dlr 
 | `DlrBillingIntegrationTest` | Status + billing correlated by message_id (exact column assertions), billing before status, multipart sums, refunds, duplicates (incl. `1` vs `1.0`), 30 concurrent identical callbacks, partial batches, rejected callbacks, `require_billing` verification, metrics |
 | `DlrFlatPayloadAndReprocessIntegrationTest` | Live-gateway flat payload with no source header, `//api/...` URLs, message id kept on unrecognised payloads, single and bulk reprocessing of rejected rows (idempotent, no loops, non-JSON rows skipped) |
 | `DlrMultipartIntegrationTest` | Status DLR `<id>:1` + 4-part billing correlate (lookup by `<id>` or `<id>:1`, verify with `require_billing`), per-part statuses, part duplicates, V3 backfill of old rows, ids without numeric suffix untouched |
+| `DlrClickIntegrationTest` | Real click payloads (incl. escaped slashes) stored field by field, correlated with the status DLR by `<id>` or `<id>:1`, 2 clicks summed, resend = duplicate, click before status, `require_click` verification, rejected clicks, metrics |
 | `DlrSecurityIntegrationTest` | Authentication enforced end to end; refused callbacks are not stored |
 | `DlrBulkIntegrationTest` | 1 / 100 / 1,000 / 10,000 DLRs over HTTP, 48 at a time, mixed providers and statuses, progressions, duplicates and multipart billing DLRs. Every message's status, mobile, correlation id and billed units and amount are checked against the database |
 

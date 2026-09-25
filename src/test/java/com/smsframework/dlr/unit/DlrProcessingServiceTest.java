@@ -5,6 +5,9 @@ import com.smsframework.dlr.billing.BillingProcessingService;
 import com.smsframework.dlr.billing.DefaultBillingDlrAdapter;
 import com.smsframework.dlr.billing.DlrBillingEvent;
 import com.smsframework.dlr.billing.DlrBillingRepository;
+import com.smsframework.dlr.click.ClickProcessingService;
+import com.smsframework.dlr.click.DlrClickRepository;
+import com.smsframework.dlr.click.ShortLinkClickAdapter;
 import com.smsframework.dlr.config.DlrProperties;
 import com.smsframework.dlr.domain.ProcessingStatus;
 import com.smsframework.dlr.entity.DlrEvent;
@@ -70,10 +73,35 @@ class DlrProcessingServiceTest {
                 new DlrStateMachine(props), events, statuses, new DlrMapper(AdapterTestSupport.MAPPER, props),
                 metrics, tx, AdapterTestSupport.MAPPER, props,
                 List.of(new DefaultBillingDlrAdapter(AdapterTestSupport.MAPPER, AdapterTestSupport.VALIDATOR, props)),
-                billing);
+                billing, new ShortLinkClickAdapter(AdapterTestSupport.MAPPER, AdapterTestSupport.VALIDATOR, props),
+                new ClickProcessingService(clickRepository = mock(DlrClickRepository.class), tx, metrics));
     }
 
     private DlrBillingRepository billingRepository;
+    private DlrClickRepository clickRepository;
+
+    @Test
+    void shortLinkClickIsRoutedToClicksAndCorrelatedWithoutPartSuffix() {
+        when(clickRepository.insertIfAbsent(any(), any(), any(), any(), any())).thenReturn(Optional.of(11L));
+
+        ProcessingResult r = service.process(null, TestPayloads.CLICK_EXAMPLE);
+
+        assertThat(r.isClick()).isTrue();
+        assertThat(r.click().processingStatus()).isEqualTo("APPLIED");
+        assertThat(r.click().messageId()).isEqualTo("68c3d2ef-9ced-46b8-aa1c-13be73ad9321");
+        assertThat(r.click().providerMessageId()).isEqualTo("68c3d2ef-9ced-46b8-aa1c-13be73ad9321:1");
+        assertThat(r.click().visitedCount()).isEqualTo(2);
+        verify(events, never()).insertIfAbsent(any());
+        assertThat(count("dlr.click.applied")).isEqualTo(1);
+    }
+
+    @Test
+    void clickWithoutMessageIdIsRejected() {
+        ProcessingResult r = service.process(null, "{\"event\":\"short_link\",\"data\":{\"url_key\":\"X\"}}");
+        assertThat(r.processingStatus()).isEqualTo(ProcessingStatus.REJECTED);
+        assertThat(r.rejectionReason()).isEqualTo("short_link: data.message_id is missing");
+        assertThat(count("dlr.click.rejected")).isEqualTo(1);
+    }
 
     @Test
     void billingCallbackIsRoutedToBillingAndNotToStatusAdapters() {

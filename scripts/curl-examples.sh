@@ -62,6 +62,10 @@ step "8d. Billing DLR with an invalid event (message_id missing) -> 400, stored 
 curl -sS -X POST "$BASE/api/v1/dlr/receive" -H 'Content-Type: application/json' \
      -H 'X-DLR-Source: DEFAULT_SMS' "${AUTH[@]}" --data @"$DIR/billing-invalid-event.json"; echo
 
+step "8e. Short-link click event for the delivered message"
+curl -sS -X POST "$BASE/api/v1/dlr/receive" -H 'Content-Type: application/json' \
+     "${AUTH[@]}" --data @"$DIR/short-link-click.json"; echo
+
 step "9. Query one DLR (automation lookup by message_id) - includes the billing summary"
 curl -sS "$BASE/api/v1/dlr/2ee98174-eec2-46b1-9b3c-baa0853c9538" "${AUTH[@]}"; echo
 
@@ -70,6 +74,9 @@ curl -sS "$BASE/api/v1/dlr/f1189190-3fab-4a74-9130-f932be1de679?include_events=t
 
 step "10b. Billing events for a message"
 curl -sS "$BASE/api/v1/dlr/2ee98174-eec2-46b1-9b3c-baa0853c9538/billing" "${AUTH[@]}"; echo
+
+step "10c. Short-link clicks for a message"
+curl -sS "$BASE/api/v1/dlr/2ee98174-eec2-46b1-9b3c-baa0853c9538/clicks" "${AUTH[@]}"; echo
 
 step "11. Unknown message -> received=false, status=PENDING"
 curl -sS "$BASE/api/v1/dlr/unknown" "${AUTH[@]}"; echo
@@ -96,5 +103,5 @@ curl -sS -X POST "$BASE/api/v1/dlr/events/rejected/reprocess?limit=100" "${AUTH[
 
 step "15. Health + metrics"
 curl -sS "$BASE/actuator/health"; echo
-curl -sS "$BASE/actuator/prometheus" 2>/dev/null | grep -E '^dlr_(received|delivered|failed|duplicate|rejected|ignored|billing_[a-z]+)_total' || \
+curl -sS "$BASE/actuator/prometheus" 2>/dev/null | grep -E '^dlr_(received|delivered|failed|duplicate|rejected|ignored|billing_[a-z]+|click_[a-z]+)_total' || \
   curl -sS "$BASE/actuator/metrics/dlr.received"; echo

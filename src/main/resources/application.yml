@@ -115,6 +115,14 @@ dlr:
     rejected-http-status: 400
     max-events-page-size: 500
 
+  # Short-link click events: {"event":"short_link","data":{"message_id":"<id>:1","url_key":...,"visited_count":...}}
+  # received on /api/v1/dlr/receive and correlated to the status DLR by message_id.
+  clicks:
+    enabled: ${DLR_CLICKS_ENABLED:true}
+    event-types: [short_link]
+    default-source: DEFAULT_SMS          # recorded when the callback carries no X-DLR-Source
+    sources: [DEFAULT_SMS]               # sources allowed to send click events
+
   # Billing DLRs: {"event_type":"billing","events":[{"transaction_type":"debit","message_id":"<id>:1",...}]}
   # received on the same /api/v1/dlr/receive endpoint and correlated to the status DLR by message_id.
   billing:

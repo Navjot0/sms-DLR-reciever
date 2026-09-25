@@ -20,8 +20,12 @@ public record DlrVerificationResponse(
         /* messages with at least one APPLIED billing DLR / without any */
         int billed,
         int billingMissing,
+        /* messages with at least one short-link click / without any */
+        int clicked,
+        int clickMissing,
         String expectedStatus,
         Boolean requireBilling,
+        Boolean requireClick,
         Integer matched,
         Boolean allMatched,
         List<Result> results) {
@@ -39,6 +43,8 @@ public record DlrVerificationResponse(
             Integer billedUnits,
             BigDecimal billedAmount,
             String currency,
+            boolean clicked,
+            Integer clickCount,
             Boolean matched) {
     }
 }
