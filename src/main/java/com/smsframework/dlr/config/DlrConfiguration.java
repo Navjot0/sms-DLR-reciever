@@ -42,6 +42,15 @@ public class DlrConfiguration {
     }
 
     @Bean
+    public FilterRegistrationBean<PathNormalizationFilter> pathNormalizationFilter() {
+        FilterRegistrationBean<PathNormalizationFilter> reg = new FilterRegistrationBean<>(new PathNormalizationFilter());
+        reg.addUrlPatterns("/*");
+        reg.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        reg.setName("dlrPathNormalizationFilter");
+        return reg;
+    }
+
+    @Bean
     public FilterRegistrationBean<CallbackAuthenticationFilter> callbackAuthenticationFilter(
             DlrProperties properties, CallbackAuthenticator authenticator, DlrMetrics metrics, ObjectMapper objectMapper) {
         FilterRegistrationBean<CallbackAuthenticationFilter> reg = new FilterRegistrationBean<>(

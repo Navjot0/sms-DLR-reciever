@@ -177,8 +177,12 @@ Dockerfile, docker-compose.yml, .env.example
 | `GET` | `/api/v1/dlr/search?correlation_id=…` or `?external_message_id=…` | Lookup by secondary keys |
 | `GET` | `/api/v1/dlr/events/rejected?limit=50` | Most recent rejected callbacks |
 | `GET` | `/api/v1/dlr/events/billing/rejected?limit=50` | Most recent rejected billing events |
+| `POST` | `/api/v1/dlr/events/{eventId}/reprocess?source=` | Re-run one stored `REJECTED` callback through the pipeline |
+| `POST` | `/api/v1/dlr/events/rejected/reprocess?limit=100&source=` | Re-run every `REJECTED` callback not reprocessed yet |
 | `GET` | `/actuator/health` | Liveness, readiness and PostgreSQL status |
 | `GET` | `/actuator/prometheus` | Metrics |
+
+Repeated slashes in the path are collapsed. For example, `http://host:8080//api/v1/dlr/{id}` (a base URL configured with a trailing slash) works the same as `/api/v1/dlr/{id}`.
 
 ### `POST /api/v1/dlr/receive`
 
@@ -286,6 +290,8 @@ The original value is always kept in `provider_status`. The mapping is set in `d
 
 WebEngage `sms_sent` is **`SENT`, never `DELIVERED`**. A later `sms_delivered` moves the message to `DELIVERED`.
 
+The Default SMS DLR is accepted in two shapes with the same fields: **wrapped** as `{"payload": {"message_id": …, "mobile": …, "status": …}}`, and **flat** as `{"message_id": …, "mobile": …, "status": …, "code": …}`. The flat shape is what the live gateway sends (`samples/default-sms-flat.json`). Both are detected without an `X-DLR-Source` header.
+
 | Default SMS field | Normalized | WebEngage field | Normalized |
 |---|---|---|---|
 | `payload.message_id` | `message_id` | `messageId` | `message_id` |
@@ -340,7 +346,7 @@ The integration tests send 60 messages × 3 callbacks (`SUBMITTED`, final, `SUBM
 
 | Provider | Required | Optional |
 |---|---|---|
-| Default SMS | `payload`, `payload.message_id`, `payload.mobile`, `payload.status` | `entity_id`, `template_id`, `correlation_id`, … |
+| Default SMS | `message_id`, `mobile`, `status` (inside `payload` for the wrapped form) | `entity_id`, `template_id`, `correlation_id`, … |
 | WebEngage | `messageId`, `toNumber`, `status` | `statusCode`, `smsCount`, `version` |
 
 Field lengths are also checked against the column sizes. Invalid callbacks are **never discarded**. They are stored with `processing_status = REJECTED`, a `rejection_reason`, and the complete raw payload:
@@ -355,7 +361,26 @@ Field lengths are also checked against the column sizes. Invalid callbacks are *
 | no source and structure not recognized | `unable to determine DLR source from headers, query parameters or payload structure` |
 | too large | `payload exceeds 65536 bytes` |
 
-When a rejected payload still contains a readable message id, it is stored in `message_id`, so `GET /api/v1/dlr/{id}` can report it.
+When a rejected payload still contains a readable message id, it is stored in `message_id`, so `GET /api/v1/dlr/{id}` can report it. This also applies when the source could not be determined.
+
+### Reprocessing rejected callbacks
+
+Rejected callbacks keep their complete raw payload, so they can be applied later, for example after deploying support for a new payload shape:
+
+```bash
+curl -X POST 'localhost:8080/api/v1/dlr/events/6/reprocess'                          # one row (id from dlr_events)
+curl -X POST 'localhost:8080/api/v1/dlr/events/6/reprocess?source=DEFAULT_SMS'       # force the provider
+curl -X POST 'localhost:8080/api/v1/dlr/events/rejected/reprocess?limit=100'         # all not yet reprocessed
+```
+
+How reprocessing behaves:
+
+- The stored raw payload goes through the normal pipeline, including idempotency and the state machine. Running it twice gives a `DUPLICATE`, never a second `APPLIED`.
+- The original row stays `REJECTED` for the audit trail, and its `processing_note` is set to `reprocessed -> APPLIED (event N)`.
+- Rows that were not valid JSON when received are marked `reprocess skipped`.
+- A retry that is rejected again is marked, so bulk reprocessing never loops over it.
+
+These endpoints sit under `/api/v1/dlr/`, so `DLR_PROTECT_QUERY_API=true` puts them behind the API key.
 
 ---
 
@@ -596,6 +621,7 @@ DLR_TEST_DB_URL=jdbc:postgresql://dbhost:5432/dlr_test DLR_TEST_DB_USERNAME=dlr 
 | `DlrReceiverIntegrationTest` | POST → PostgreSQL → GET with exact column-level assertions, WebEngage lifecycle, all source-resolution modes, duplicates, 40 concurrent identical callbacks (exactly one `APPLIED`), concurrent shuffled progressions, rejected, malformed and oversized storage, verify API, correlation search, health, metrics |
 | `DefaultBillingDlrAdapterTest` | Exact normalization of the reference billing payload, `<id>:<part>` parsing, numeric strings and decimals, per-event and whole-callback validation |
 | `DlrBillingIntegrationTest` | Status + billing correlated by message_id (exact column assertions), billing before status, multipart sums, refunds, duplicates (incl. `1` vs `1.0`), 30 concurrent identical callbacks, partial batches, rejected callbacks, `require_billing` verification, metrics |
+| `DlrFlatPayloadAndReprocessIntegrationTest` | Live-gateway flat payload with no source header, `//api/...` URLs, message id kept on unrecognised payloads, single and bulk reprocessing of rejected rows (idempotent, no loops, non-JSON rows skipped) |
 | `DlrSecurityIntegrationTest` | Authentication enforced end to end; refused callbacks are not stored |
 | `DlrBulkIntegrationTest` | 1 / 100 / 1,000 / 10,000 DLRs over HTTP, 48 at a time, mixed providers and statuses, progressions, duplicates and multipart billing DLRs. Every message's status, mobile, correlation id and billed units and amount are checked against the database |
 

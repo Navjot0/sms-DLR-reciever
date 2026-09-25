@@ -16,7 +16,8 @@ import static com.smsframework.dlr.util.DlrValues.parseInteger;
 import static com.smsframework.dlr.util.DlrValues.parseTimestamp;
 
 /**
- * Default SMS gateway DLR: {"payload": {"message_id", "mobile", "status", "code", ...}}.
+ * Default SMS gateway DLR, wrapped: {"payload": {"message_id", "mobile", "status", "code", ...}}
+ * or flat: {"message_id", "mobile", "status", "code", ...}.
  */
 @Component
 @Order(100)
@@ -37,18 +38,41 @@ public class DefaultSmsDlrAdapter extends AbstractJsonDlrAdapter {
     @Override
     protected boolean matchesStructure(JsonNode payload) {
         JsonNode inner = payload.get("payload");
-        return inner != null && inner.isObject() && (inner.has("message_id") || inner.has("status"));
+        if (inner != null && inner.isObject()) {
+            return inner.has("message_id") || inner.has("status");
+        }
+        return isFlat(payload);
+    }
+
+    /**
+     * The gateway sends the same fields either wrapped ({"payload": {...}}) or flat at the root
+     * ({"message_id": ..., "mobile": ..., "status": ..., "code": ...}). Both are accepted.
+     */
+    static boolean isFlat(JsonNode payload) {
+        return payload != null && payload.isObject() && !payload.has("payload") && payload.has("message_id")
+                && (payload.has("status") || payload.has("mobile"));
     }
 
     @Override
     public String peekMessageId(JsonNode payload) {
-        JsonNode v = payload == null ? null : payload.path("payload").path("message_id");
-        return v != null && v.isValueNode() ? blankToNull(v.asText()) : null;
+        if (payload == null) {
+            return null;
+        }
+        JsonNode v = payload.path("payload").path("message_id");
+        if (!v.isValueNode()) {
+            v = payload.path("message_id");
+        }
+        return v.isValueNode() ? blankToNull(v.asText()) : null;
     }
 
     @Override
     public NormalizedDlr normalize(JsonNode payload) {
-        DefaultSmsDlrRequest.Payload p = bindAndValidate(payload, DefaultSmsDlrRequest.class).getPayload();
+        JsonNode envelope = payload;
+        if (isFlat(payload)) {
+            // Flat form: treat the root object as the "payload" object.
+            envelope = mapper.createObjectNode().set("payload", payload);
+        }
+        DefaultSmsDlrRequest.Payload p = bindAndValidate(envelope, DefaultSmsDlrRequest.class).getPayload();
 
         String providerStatus = p.getStatus().trim();
         NormalizedStatus normalized = statusNormalizer.normalize(SOURCE, providerStatus);

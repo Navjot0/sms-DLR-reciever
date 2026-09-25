@@ -170,7 +170,8 @@ public class DlrProcessingService {
         }
         Optional<DlrProviderAdapter> adapterOpt = adapters.find(explicitSource, json);
         if (adapterOpt.isEmpty()) {
-            return reject(UNKNOWN_SOURCE, null, rawForStorage,
+            // Keep whatever message id we can find so automation can still see the rejection for that message.
+            return reject(UNKNOWN_SOURCE, adapters.peekMessageId(json), rawForStorage,
                     "unable to determine DLR source from headers, query parameters or payload structure", false);
         }
         DlrProviderAdapter adapter = adapterOpt.get();

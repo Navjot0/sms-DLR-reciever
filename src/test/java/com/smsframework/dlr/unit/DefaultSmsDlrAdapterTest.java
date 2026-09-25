@@ -40,6 +40,32 @@ class DefaultSmsDlrAdapterTest {
     }
 
     @Test
+    void flatPayloadWithoutWrapperIsAcceptedAndDetected() {
+        assertThat(adapter.supports(null, json(TestPayloads.DEFAULT_SMS_FLAT_EXAMPLE))).isTrue();
+        assertThat(adapter.peekMessageId(json(TestPayloads.DEFAULT_SMS_FLAT_EXAMPLE)))
+                .isEqualTo("664f1ac5-3f1b-4a2b-b9e3-08c89b13b8a4");
+
+        NormalizedDlr d = adapter.normalize(json(TestPayloads.DEFAULT_SMS_FLAT_EXAMPLE));
+        assertThat(d.getMessageId()).isEqualTo("664f1ac5-3f1b-4a2b-b9e3-08c89b13b8a4");
+        assertThat(d.getMobile()).isEqualTo("918727973019");
+        assertThat(d.getSender()).isEqualTo("CERFGS");
+        assertThat(d.getProviderStatus()).isEqualTo("DELIVRD");
+        assertThat(d.getNormalizedStatus()).isEqualTo(NormalizedStatus.DELIVERED);
+        assertThat(d.getStatusCode()).isEqualTo("000");
+        assertThat(d.getUnits()).isEqualTo(2);
+        assertThat(d.getEntityId()).isEqualTo("1701164872369547174");
+        assertThat(d.getTemplateId()).isEqualTo("1507166245188685280");
+        assertThat(d.getCorrelationId()).as("JSON null").isNull();
+        assertThat(d.getDlrReceivedAt()).isEqualTo(LocalDateTime.of(2026, 9, 25, 17, 43, 10));
+    }
+
+    @Test
+    void flatPayloadIsValidatedLikeTheWrappedOne() {
+        assertThatThrownBy(() -> adapter.normalize(json("{\"message_id\":\"f1\",\"status\":\"DELIVRD\"}")))
+                .hasMessage("mobile is missing");
+    }
+
+    @Test
     void undelivIsFailedAndCarriesErrorCode() {
         NormalizedDlr d = adapter.normalize(json(TestPayloads.defaultSms("m1", "917973059161", "UNDELIV", "034",
                 "2026-06-22 11:50:00", "c1")));

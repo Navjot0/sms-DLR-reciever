@@ -40,6 +40,21 @@ public class DlrAdapterRegistry {
         return matches.stream().findFirst();
     }
 
+    /** Best-effort message id from an unrecognised payload: first non-null answer of any adapter. */
+    public String peekMessageId(JsonNode payload) {
+        for (DlrProviderAdapter a : adapters) {
+            try {
+                String id = a.peekMessageId(payload);
+                if (id != null) {
+                    return id;
+                }
+            } catch (RuntimeException ignored) {
+                // best effort only
+            }
+        }
+        return null;
+    }
+
     public boolean isKnownSource(String source) {
         return source != null && adapters.stream().anyMatch(a -> a.source().equalsIgnoreCase(source));
     }

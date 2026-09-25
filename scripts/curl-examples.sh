@@ -22,6 +22,10 @@ step "3. Default SMS failure (UNDELIV) - source detected from payload structure 
 curl -sS -X POST "$BASE/api/v1/dlr/receive" -H 'Content-Type: application/json' \
      "${AUTH[@]}" --data @"$DIR/default-sms-failed.json"; echo
 
+step "3b. Default SMS DLR in flat form (no \"payload\" wrapper, no source header) - as the live gateway sends it"
+curl -sS -X POST "$BASE/api/v1/dlr/receive" -H 'Content-Type: application/json' \
+     "${AUTH[@]}" --data @"$DIR/default-sms-flat.json"; echo
+
 step "4. WebEngage sms_sent (-> SENT, not DELIVERED)"
 curl -sS -X POST "$BASE/api/v1/dlr/receive" -H 'Content-Type: application/json' \
      -H 'X-DLR-Source: WEBENGAGE' "${AUTH[@]}" --data @"$DIR/webengage-sent.json"; echo
@@ -86,6 +90,9 @@ curl -sS "$BASE/api/v1/dlr/events/rejected?limit=5" "${AUTH[@]}"; echo
 
 step "14b. Recent rejected billing events"
 curl -sS "$BASE/api/v1/dlr/events/billing/rejected?limit=5" "${AUTH[@]}"; echo
+
+step "14c. Reprocess rejected callbacks (e.g. after deploying a fix)"
+curl -sS -X POST "$BASE/api/v1/dlr/events/rejected/reprocess?limit=100" "${AUTH[@]}"; echo
 
 step "15. Health + metrics"
 curl -sS "$BASE/actuator/health"; echo

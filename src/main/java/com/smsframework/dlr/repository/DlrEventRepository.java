@@ -78,6 +78,18 @@ public class DlrEventRepository {
                 new MapSqlParameterSource().addValue("s", status.name()).addValue("n", note).addValue("id", id));
     }
 
+    public void updateNote(long id, String note) {
+        jdbc.update("UPDATE dlr_events SET processing_note = :n, updated_at = CURRENT_TIMESTAMP WHERE id = :id",
+                new MapSqlParameterSource().addValue("n", note).addValue("id", id));
+    }
+
+    /** REJECTED callbacks that have not been reprocessed yet (and were not created by reprocessing). */
+    public List<DlrEvent> findRejectedNotReprocessed(int limit) {
+        return jdbc.query(SELECT + "WHERE processing_status = 'REJECTED' "
+                        + "AND (processing_note IS NULL OR processing_note NOT LIKE 'reprocess%') ORDER BY id LIMIT :limit",
+                new MapSqlParameterSource("limit", limit), MAPPER);
+    }
+
     public Optional<DlrEvent> findById(long id) {
         return jdbc.query(SELECT + "WHERE id = :id", new MapSqlParameterSource("id", id), MAPPER).stream().findFirst();
     }

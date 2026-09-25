@@ -52,6 +52,13 @@ public final class TestPayloads {
                 .formatted(messageId, status, statusCode);
     }
 
+    /** Flat default-SMS DLR (no "payload" wrapper), exactly as the live gateway sends it. */
+    public static final String DEFAULT_SMS_FLAT_EXAMPLE = """
+            {"code": "000", "units": "2", "mobile": "918727973019", "sender": "CERFGS", "status": "DELIVRD",
+             "service": "T", "entity_id": "1701164872369547174", "submit_at": "2026-09-25 17:43:10",
+             "message_id": "664f1ac5-3f1b-4a2b-b9e3-08c89b13b8a4", "template_id": "1507166245188685280",
+             "correlation_id": null, "dlr_received_at": "2026-09-25 17:43:10"}""";
+
     public static final String BILLING_EXAMPLE = """
             {
               "event_type": "billing",
