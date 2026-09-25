@@ -1,0 +1,162 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+  tomcat:
+    max-swallow-size: 1MB
+    threads:
+      max: ${SERVER_MAX_THREADS:200}
+
+spring:
+  application:
+    name: sms-dlr-receiver
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/dlr}
+    username: ${DB_USERNAME:dlr}
+    password: ${DB_PASSWORD:dlr}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: 2
+      connection-timeout: 5000
+      pool-name: dlr-pool
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: always
+  mvc:
+    problemdetails:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: ${HEALTH_SHOW_DETAILS:always}
+      probes:
+        enabled: true
+  health:
+    db:
+      enabled: true
+  metrics:
+    tags:
+      application: sms-dlr-receiver
+    distribution:
+      percentiles-histogram:
+        dlr.processing.latency: true
+
+logging:
+  level:
+    root: INFO
+    com.smsframework.dlr: INFO
+
+# ---------------------------------------------------------------------------
+# DLR receiver configuration (see DlrProperties for full documentation)
+# ---------------------------------------------------------------------------
+dlr:
+  instance-id: ${DLR_INSTANCE_ID:}
+  timezone: ${DLR_TIMEZONE:Asia/Kolkata}
+
+  source-resolution:
+    headers: [X-DLR-Source, X-DLR-Provider, source, provider]
+    query-params: [source, provider]
+    detect-from-payload: ${DLR_DETECT_FROM_PAYLOAD:true}
+    aliases:
+      DEFAULT: DEFAULT_SMS
+      SMS: DEFAULT_SMS
+      WE: WEBENGAGE
+      WEB_ENGAGE: WEBENGAGE
+
+  # NORMALIZED_STATUS -> provider statuses (case-insensitive). Unlisted -> UNKNOWN.
+  status-mapping:
+    DELIVERED: [DELIVRD, DELIVERED, SMS_DELIVERED]
+    FAILED: [UNDELIV, FAILED, SMS_FAILED]
+    EXPIRED: [EXPIRED, SMS_EXPIRED]
+    REJECTED: [REJECTD, REJECTED]
+    SENT: [SMS_SENT, SUBMITTED]
+
+  # Optional per-provider overrides, checked before the global mapping:
+  # provider-status-mapping:
+  #   WEBENGAGE:
+  #     DELIVERED: [sms_delivered]
+
+  state-machine:
+    # CURRENT -> allowed NEXT. Final states map to [] (no downgrade, no flip-flop).
+    # To allow e.g. a late DELIVERED to override FAILED: FAILED: [DELIVERED]
+    transitions:
+      UNKNOWN: [SENT, DELIVERED, FAILED, EXPIRED, REJECTED]
+      SENT: [DELIVERED, FAILED, EXPIRED, REJECTED]
+      DELIVERED: []
+      FAILED: []
+      EXPIRED: []
+      REJECTED: []
+
+  idempotency:
+    key-fields: [source, message_id, provider_status, status_code, provider_event_id, dlr_received_at]
+    store-duplicates: true
+
+  api:
+    max-verify-ids: 10000
+    max-payload-bytes: 65536
+    rejected-http-status: 400
+    max-events-page-size: 500
+
+  security:
+    enabled: ${DLR_AUTH_ENABLED:false}
+    enforce-in-profiles: [prod, production]
+    callback-paths: [/api/v1/dlr/receive]
+    protect-query-api: ${DLR_PROTECT_QUERY_API:false}
+    api-key:
+      enabled: ${DLR_API_KEY_ENABLED:false}
+      header-name: X-API-Key
+      keys: ${DLR_API_KEYS:}
+    bearer:
+      enabled: ${DLR_BEARER_ENABLED:false}
+      tokens: ${DLR_BEARER_TOKENS:}
+    ip-allowlist:
+      enabled: ${DLR_IP_ALLOWLIST_ENABLED:false}
+      cidrs: ${DLR_IP_ALLOWLIST:}
+      trust-forwarded-for: ${DLR_TRUST_FORWARDED_FOR:false}
+    hmac:
+      enabled: ${DLR_HMAC_ENABLED:false}
+      header-name: X-DLR-Signature
+      secret: ${DLR_HMAC_SECRET:}
+      algorithm: HmacSHA256
+      timestamp-header-name: X-DLR-Timestamp
+      require-timestamp: ${DLR_HMAC_REQUIRE_TIMESTAMP:false}
+      max-skew-seconds: 300
+
+---
+# JSON (logstash-format) structured logs for containers/production (Spring Boot 3.4+ built-in).
+spring:
+  config:
+    activate:
+      on-profile: docker | prod | production
+logging:
+  structured:
+    format:
+      console: logstash
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod | production
+dlr:
+  security:
+    enabled: ${DLR_AUTH_ENABLED:true}
+management:
+  endpoint:
+    health:
+      show-details: when-authorized

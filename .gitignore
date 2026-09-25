@@ -1,0 +1,8 @@
+target/
+.idea/
+*.iml
+.vscode/
+__pycache__/
+.pytest_cache/
+*.log
+.env

@@ -1,0 +1,13 @@
+target/
+automation/
+samples/
+scripts/
+docker/
+**/__pycache__/
+.pytest_cache/
+.idea/
+.vscode/
+*.iml
+.git/
+*.md
+.env

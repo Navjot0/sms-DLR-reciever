@@ -1,0 +1,16 @@
+{
+  "payload": {
+    "message_id": "2ee98174-eec2-46b1-9b3c-baa0853c9538",
+    "service": "T",
+    "sender": "MSEFSL",
+    "mobile": "917973059161",
+    "status": "SUBMITTED",
+    "code": "000",
+    "submit_at": "2026-06-22 11:47:33",
+    "dlr_received_at": "2026-06-22 11:47:30",
+    "entity_id": "",
+    "template_id": "1507165786055955979",
+    "units": "2",
+    "correlation_id": "75892985798379875987198579175987912757589298579837987598719857917598791275"
+  }
+}
