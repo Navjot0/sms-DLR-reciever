@@ -114,7 +114,7 @@ The page is served by the receiver itself and needs no build step or external as
 | **Message lookup** | One message, with or without `:part`: delivery state and parts, billing summary, click summary, and every callback as a timeline with its raw JSON. It can auto-refresh. `/ui/?message_id=<id>` links directly to it |
 | **Bulk verify** | Paste ids and choose the expected status, require billing and/or require click. Shows PASS/FAIL, the counts, and a row per id with missing ids marked |
 
-Duplicate and invalid (unparseable) callbacks are not counted or shown in the UI. They are still stored, and the `/api/v1/dlr/events/rejected` and reprocess APIs still work.
+If a whole billing callback could not be processed, the Billing tile shows a warning with the count. Duplicate and invalid (unparseable) callbacks are not counted or shown in the UI. They are still stored, and the `/api/v1/dlr/events/rejected` and reprocess APIs still work.
 
 The UI reads two extra endpoints:
 
@@ -391,7 +391,7 @@ Field lengths are also checked against the column sizes. Invalid callbacks are *
 | empty body | `request body is empty` |
 | unknown header source | `unsupported DLR source: ACME (supported: [DEFAULT_SMS, WEBENGAGE])` |
 | no source and structure not recognized | `unable to determine DLR source from headers, query parameters or payload structure` |
-| too large | `payload exceeds 65536 bytes` |
+| too large | `payload exceeds 10485760 bytes` (limit: `DLR_MAX_PAYLOAD_BYTES`) |
 
 When a rejected payload still contains a readable message id, it is stored in `message_id`, so `GET /api/v1/dlr/{id}` can report it. This also applies when the source could not be determined.
 
@@ -728,6 +728,8 @@ The full, commented configuration is in `src/main/resources/application.yml`, wi
 | `DLR_TIMEZONE` | `Asia/Kolkata` | Zone for zoned or epoch provider timestamps and the receiver-time `received_at` fallback |
 | `DLR_INSTANCE_ID` | hostname | Written to `dlr_events.receiver_instance` |
 | `DLR_BILLING_ENABLED` | `true` | Accept billing DLRs (other billing settings are under `dlr.billing` in `application.yml`) |
+| `DLR_MAX_PAYLOAD_BYTES` | `10485760` | Max callback body (10 MB). Bulk-campaign billing callbacks carry one event per recipient, about 200 bytes each |
+| `DLR_BILLING_MAX_EVENTS` | `50000` | Max events in one billing callback |
 | `DLR_DETECT_FROM_PAYLOAD` | `true` | Allow detecting the source from the payload structure when no header or parameter is sent |
 | `DLR_AUTH_ENABLED` … | see [Security](#security) | Callback authentication |
 | `SPRING_PROFILES_ACTIVE` | – (`docker` in the container) | `docker` (JSON logs), `prod` (JSON logs, auth enforced) |

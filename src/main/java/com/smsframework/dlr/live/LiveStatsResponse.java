@@ -20,7 +20,8 @@ public record LiveStatsResponse(
         List<Bucket> series) {
 
     public record Totals(long dlrs, long delivered, long failed, long rejected, long pending,
-                         long billingEvents, BigDecimal billedAmount, String billedCurrency, long clicks) {
+                         long billingEvents, BigDecimal billedAmount, String billedCurrency, long clicks,
+                         long billingCallbacksRejected) {   // whole billing callbacks that could not be processed
     }
 
     /**

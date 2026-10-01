@@ -119,6 +119,35 @@ class DlrLiveUiIntegrationTest extends AbstractIntegrationTest {
         assertThat(all.get("bucket_minutes").asInt()).isEqualTo(60);
     }
 
+    @Test
+    void bulkCampaignBillingCallbackIsAppliedAndShown() {
+        // ~500 recipients in one callback (~100 KB): used to exceed the old 64 KB limit and was rejected
+        String bulk = TestPayloads.billing("bulk-camp", 500, "debit", "0.01");
+        assertThat(bulk.length()).isGreaterThan(64 * 1024);
+        assertThat(postDlr(bulk, Map.of()).statusCode()).isEqualTo(200);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM dlr_billing_events WHERE processing_status = 'APPLIED'",
+                Long.class)).isEqualTo(500);
+        // the complete callback is stored once, not on every row
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM dlr_billing_events WHERE raw_payload IS NOT NULL",
+                Long.class)).isEqualTo(1);
+
+        JsonNode t = getJson("/api/v1/dlr/live/stats?minutes=60").get("totals");
+        assertThat(t.get("billing_events").asLong()).isEqualTo(500);
+        assertThat(t.get("billed_amount").decimalValue()).isEqualByComparingTo("5");
+        assertThat(t.get("billing_callbacks_rejected").asLong()).isZero();
+
+        JsonNode feed = getJson("/api/v1/dlr/live/feed?limit=10");
+        assertThat(feed.at("/items/0/kind").asText()).isEqualTo("BILLING");
+    }
+
+    @Test
+    void rejectedBillingCallbackIsCounted() {
+        postDlr("{\"event_type\":\"billing\",\"events\":\"not-a-list\"}", Map.of());
+        assertThat(getJson("/api/v1/dlr/live/stats?minutes=60").at("/totals/billing_callbacks_rejected").asLong())
+                .isEqualTo(1);
+    }
+
     private static JsonNode category(JsonNode stats, String key) {
         for (JsonNode c : stats.get("categories")) {
             if (key.equals(c.get("key").asText())) {

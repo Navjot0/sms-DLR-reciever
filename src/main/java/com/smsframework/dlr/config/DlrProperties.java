@@ -128,8 +128,8 @@ public class DlrProperties {
     public static class Api {
         /** Max message_ids accepted by POST /api/v1/dlr/verify. */
         private int maxVerifyIds = 10_000;
-        /** Max callback body size in bytes. */
-        private int maxPayloadBytes = 64 * 1024;
+        /** Max callback body size in bytes. Billing callbacks of a bulk campaign carry one event per recipient (~200 B each). */
+        private int maxPayloadBytes = 10 * 1024 * 1024;
         /** HTTP status returned for a REJECTED (but persisted) callback. 400 tells the provider not to retry a bad payload. */
         private int rejectedHttpStatus = 400;
         /** Max events returned by event listing endpoints. */
@@ -179,7 +179,7 @@ public class DlrProperties {
         /** Transaction types that subtract from the billed amount. */
         private List<String> creditTypes = new ArrayList<>(List.of("credit", "refund", "reversal"));
         /** Max events accepted in one billing callback. */
-        private int maxEventsPerCallback = 1000;
+        private int maxEventsPerCallback = 50_000;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }

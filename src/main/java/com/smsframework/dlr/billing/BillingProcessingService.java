@@ -43,12 +43,17 @@ public class BillingProcessingService {
         this.properties = properties;
     }
 
+    /** Above this many events per callback, per-event lines are logged at DEBUG (a summary line is always logged). */
+    private static final int PER_EVENT_LOG_LIMIT = 20;
+
     public BillingResult process(String source, List<NormalizedBillingEvent> events, String rawPayload, String instance) {
         UUID batchId = UUID.randomUUID();
         List<BillingResult.EventOutcome> outcomes = tx.execute(status -> {
             List<BillingResult.EventOutcome> list = new ArrayList<>(events.size());
-            for (NormalizedBillingEvent e : events) {
-                list.add(persist(e, source, batchId, rawPayload, instance));
+            // The complete callback is stored once (on the first event); every row keeps its own raw_event.
+            // Storing it on every row would write N x the callback size for a bulk campaign.
+            for (int i = 0; i < events.size(); i++) {
+                list.add(persist(events.get(i), source, batchId, i == 0 ? rawPayload : null, instance));
             }
             return list;
         });
@@ -64,7 +69,10 @@ public class BillingProcessingService {
                 case "DUPLICATE" -> duplicates++;
                 default -> rejected++;
             }
-            if (e.valid()) {
+            if (e.valid() && events.size() > PER_EVENT_LOG_LIMIT) {
+                log.debug("Billing DLR received source={} billing_message_id={} processing_status={} event_id={}",
+                        source, e.billingMessageId(), o.processingStatus(), o.eventId());
+            } else if (e.valid()) {
                 log.info("Billing DLR received source={} message_id={} billing_message_id={} transaction_type={} units={} "
                                 + "total_amount={} currency={} processing_status={} event_id={}",
                         source, MobileMasker.abbreviate(e.messageId(), 12), e.billingMessageId(), e.transactionType(),
@@ -74,6 +82,8 @@ public class BillingProcessingService {
                         source, e.messageId(), e.batchIndex(), e.rejectionReason(), o.eventId());
             }
         }
+        log.info("Billing callback processed source={} batch_id={} events={} applied={} duplicates={} rejected={}",
+                source, batchId, events.size(), applied, duplicates, rejected);
         String overall = applied == events.size() ? "APPLIED"
                 : duplicates == events.size() ? "DUPLICATE"
                 : rejected == events.size() ? "REJECTED"

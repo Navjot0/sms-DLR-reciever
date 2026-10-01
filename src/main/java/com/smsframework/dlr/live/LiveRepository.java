@@ -131,9 +131,15 @@ public class LiveRepository {
         }
         categories.add(new LiveStatsResponse.Category(SHORT_URL, label(SHORT_URL), 0, 0, 0, 0, 0, 0, null, null,
                 click[0], click[1], click[2]));
+        // billing callbacks rejected as a whole (e.g. too large / malformed) are stored in dlr_events
+        Long billingRejected = jdbc.queryForObject("""
+                SELECT count(*) FROM dlr_events WHERE processing_status = 'REJECTED'
+                  AND (raw_payload->>'event_type' = 'billing'
+                       OR raw_payload->>'_prefix' LIKE '{"event_type":"billing"%')""" + " AND " + window, p, Long.class);
         String currency = currencies.isEmpty() ? null : currencies.size() == 1 ? currencies.iterator().next() : "MIXED";
         LiveStatsResponse.Totals totals = new LiveStatsResponse.Totals(tDlrs, tDel, tFail, tRej, tPend, tBillEv,
-                plain(tAmount), currency, click[0]);
+                plain(tAmount), currency, click[0],
+                billingRejected == null ? 0 : billingRejected);
 
         // chart: per minute up to 24 h, per hour beyond; "all time" charts the last 7 days
         int chartMinutes = minutes > 0 ? minutes : 7 * 24 * 60;

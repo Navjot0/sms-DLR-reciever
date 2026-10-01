@@ -318,7 +318,8 @@
       ["Delivered", n0(t.delivered), "good", pct(t.delivered, t.dlrs)],
       ["Failed", n0(t.failed), "bad", pct(t.failed, t.dlrs) + " · incl. expired"],
       ["Rejected", n0(t.rejected), "bad", pct(t.rejected, t.dlrs)],
-      ["Billing", n0(t.billing_events), "", money(t.billed_amount, t.billed_currency)],
+      ["Billing", n0(t.billing_events), "", money(t.billed_amount, t.billed_currency)
+        + (t.billing_callbacks_rejected ? ` · ⚠ ${n0(t.billing_callbacks_rejected)} callback(s) not processed` : "")],
       ["Short URL clicks", n0(t.clicks), "", "link visits"],
     ];
     $("tiles").innerHTML = tiles.map(([l, v, cls, sub]) =>

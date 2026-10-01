@@ -282,7 +282,7 @@ class DlrReceiverIntegrationTest extends AbstractIntegrationTest {
     @Test
     void oversizedPayloadIsRejectedWith413AndStored() {
         String huge = "{\"payload\":{\"message_id\":\"big\",\"mobile\":\"1\",\"status\":\"DELIVRD\",\"pad\":\""
-                + "x".repeat(70_000) + "\"}}";
+                + "x".repeat(10 * 1024 * 1024 + 10) + "\"}}";
         assertThat(postDlr(huge, DEFAULT_SMS).statusCode()).isEqualTo(413);
         assertThat(jdbc.queryForObject("SELECT raw_payload->>'_payload_too_large' FROM dlr_events", String.class))
                 .isEqualTo("true");
