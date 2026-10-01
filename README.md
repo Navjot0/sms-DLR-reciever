@@ -116,9 +116,10 @@ The page is served by the receiver itself and needs no build step or external as
 
 If a whole billing callback could not be processed, the Billing tile shows a warning with the count. Duplicate and invalid (unparseable) callbacks are not counted or shown in the UI. They are still stored, and the `/api/v1/dlr/events/rejected` and reprocess APIs still work.
 
-The UI reads two extra endpoints:
+The UI reads these endpoints:
 
 - `GET /api/v1/dlr/live/feed?after_status=&after_billing=&after_click=&limit=` returns the newest events across the three tables plus a cursor. Passing the cursor back returns only newer events.
+- `GET /api/v1/dlr/live/message?id=<id>:<n>` returns one recipient's status, billing, clicks and callbacks, plus a per-status count of all recipients of the message. Bulk campaigns use one message_id for every recipient, with `:<n>` per recipient. Without `:<n>` it returns the whole message.
 - `GET /api/v1/dlr/live/stats?minutes=60` returns the totals, one entry per category (`DEFAULT_SMS`, `WEBENGAGE`, `SHORT_URL`) and the chart series. `minutes=0` means all time.
 
 Both read from PostgreSQL. The UI polls them rather than using server push, so it shows the same data on every instance behind a load balancer.

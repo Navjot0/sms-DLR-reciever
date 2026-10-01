@@ -186,7 +186,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Received</th><th>Category</th><th>Type</th><th>Message ID</th><th>Part</th><th>Mobile</th>
+          <thead><tr><th>Received</th><th>Category</th><th>Type</th><th>Message ID</th><th>Mobile</th>
             <th>Status</th><th>Details</th></tr></thead>
           <tbody id="feedBody"></tbody>
         </table>
@@ -197,7 +197,7 @@
     <!-- Lookup -->
     <div id="tab-lookup" class="hidden">
       <div class="toolbar">
-        <input type="text" id="lookupId" placeholder="message_id (with or without :part)" style="min-width:360px">
+        <input type="text" id="lookupId" placeholder="message_id, or message_id:n for one recipient" style="min-width:360px">
         <button class="primary" id="lookupBtn">Look up</button>
         <label><input type="checkbox" id="lookupAuto"> Auto-refresh</label>
       </div>
@@ -467,11 +467,12 @@
             .some(v => v && String(v).toLowerCase().includes(q))));
     $("feedBody").innerHTML = rows.slice(0, 500).map(it => {
       const key = it.kind + ":" + it.id;
-      const mid = it.message_id ? `<a class="msg mono" data-id="${esc(it.message_id)}">${esc(it.message_id)}</a>` : `<span class="muted">—</span>`;
+      const full = it.provider_message_id || it.message_id;   // "<id>:<n>" = this recipient of a bulk campaign
+      const mid = full ? `<a class="msg mono" data-id="${esc(full)}" title="Open this recipient">${esc(full)}</a>` : `<span class="muted">—</span>`;
       const status = it.kind === "STATUS"
         ? `${statusBadge(it.normalized_status)} <span class="muted mono">${esc(it.provider_status || "")}</span>` : "";
       return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono">${fmt(it.created_at)}</td><td>${catTag(catOf(it))}</td><td>${kindTag(it.kind)}</td>`
-        + `<td>${mid}</td><td>${esc(it.part_number ?? "")}</td><td class="mono">${esc(it.mobile || "")}</td><td>${status}</td>`
+        + `<td>${mid}</td><td class="mono">${esc(it.mobile || "")}</td><td>${status}</td>`
         + `<td>${details(it)}</td></tr>`;
     }).join("");
     $("feedEmpty").classList.toggle("hidden", rows.length > 0);
@@ -491,46 +492,44 @@
   async function doLookup() {
     const id = $("lookupId").value.trim();
     if (!id) return;
-    const enc = encodeURIComponent(id);
     try {
-      const [st, bill, clk] = await Promise.all([
-        api(`/api/v1/dlr/${enc}?include_events=true`), api(`/api/v1/dlr/${enc}/billing`), api(`/api/v1/dlr/${enc}/clicks`)]);
+      const r = await api(`/api/v1/dlr/live/message?id=${encodeURIComponent(id)}`);
       $("lookupOut").className = "";
-      $("lookupOut").innerHTML = renderLookup(st, bill, clk);
+      $("lookupOut").innerHTML = renderLookup(r);
     } catch (e) { $("lookupOut").innerHTML = `<span class="err">Lookup failed: ${esc(e.message)}</span>`; }
   }
   function kv(pairs) {
     return `<dl class="kv">${pairs.filter(([, v]) => v !== undefined && v !== null && v !== "")
       .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
   }
-  function renderLookup(st, bill, clk) {
-    const b = bill.billing || {}, c = clk.clicks || {};
-    const parts = (st.parts || []).map(p => `${esc(p.part)}: ${statusBadge(p.status)} <span class="muted mono">${esc(p.provider_status || "")}</span>`).join("<br>");
-    const statusCard = `<div class="card"><h2>Delivery ${statusBadge(st.status)}</h2>${kv([
-      ["message_id", `<span class="mono">${esc(st.message_id)}</span>`], ["received", esc(st.received)],
-      ["provider_status", esc(st.provider_status)], ["status_code", esc(st.status_code)], ["category", st.source ? catTag(st.source) : ""],
-      ["mobile", esc(st.mobile)], ["units", esc(st.units)], ["received_at", fmt(st.received_at)],
-      ["correlation_id", esc(st.correlation_id)], ["parts", parts]])}</div>`;
+  function renderLookup(r) {
+    const st = r.status || {}, b = r.billing || {}, c = r.clicks || {}, rc = r.recipients || {};
+    const scope = r.part != null ? `recipient #${esc(r.part)}` : "whole message";
+    const statusCard = `<div class="card"><h2>Delivery ${st.received ? statusBadge(st.status) : '<span class="badge b-warn">… no DLR yet</span>'}
+        <span class="muted" style="font-weight:normal">${scope}</span></h2>${kv([
+      ["message_id", `<span class="mono">${esc(r.requested_id)}</span>`],
+      ["mobile", esc(st.mobile)], ["category", st.source ? catTag(st.source) : ""],
+      ["provider_status", esc(st.provider_status)], ["status_code", esc(st.status_code)], ["error", esc(st.error_reason)],
+      ["DLR time (provider)", esc(st.dlr_received_at)], ["received at", fmt(st.received_at)],
+      ["correlation_id", esc(st.correlation_id)]])}</div>`;
     const billingCard = `<div class="card"><h2>Billing ${b.billed ? '<span class="badge b-good">✓ billed</span>' : '<span class="badge b-warn">… not billed</span>'}</h2>${kv([
-      ["events", esc(b.events)], ["parts", esc(b.parts)], ["units (net)", esc(b.units)],
-      ["amount (net)", b.total_amount != null ? `${esc(b.total_amount)} ${esc(b.currency || "")}` : ""],
-      ["debit / credit", b.debit_amount != null ? `${esc(b.debit_amount)} / ${esc(b.credit_amount)}` : ""]])}</div>`;
-    const clickCard = `<div class="card"><h2>Clicks ${c.clicked ? '<span class="badge b-good">✓ clicked</span>' : '<span class="badge b-neutral">not clicked</span>'}</h2>${kv([
-      ["clicks", esc(c.clicks)], ["visited_count", esc(c.visited_count)], ["unique IPs", esc(c.unique_ips)],
-      ["links", esc((c.url_keys || []).join(", "))], ["first / last", c.first_clicked_at ? `${fmt(c.first_clicked_at)} / ${fmt(c.last_clicked_at)}` : ""],
-      ["last destination", esc(c.last_destination_url)], ["last device", esc(c.last_device_type)]])}</div>`;
-    const timeline = [];
-    (st.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "STATUS", what: `${statusBadge(e.normalized_status)} <span class="mono muted">${esc(e.provider_status || "")}</span>`, proc: e.processing_status, note: e.rejection_reason || e.processing_note, raw: e.raw_payload, part: e.part_number }));
-    (bill.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "BILLING", what: `${esc(e.transaction_type || "")} ${esc(e.units ?? "")} unit(s) ${esc(e.total_amount ?? "")} ${esc(e.currency || "")}`, proc: e.processing_status, note: e.rejection_reason || e.processing_note, raw: e.raw_event, part: e.part_number }));
-    (clk.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "CLICK", what: `link ${esc(e.url_key || "")} · visit #${esc(e.visited_count ?? "")} · ${esc(e.device_type || "")} ${esc(e.browser || "")}`, proc: e.processing_status, note: e.processing_note, raw: e.raw_payload, part: e.part_number }));
-    const shown = timeline.filter(x => x.proc !== "DUPLICATE" && x.proc !== "REJECTED");
-    timeline.length = 0; timeline.push(...shown);
-    timeline.sort((a, b) => new Date(a.t) - new Date(b.t));
-    const tl = timeline.length ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Part</th><th>Event</th><th>Raw</th></tr></thead><tbody>${
-      timeline.map(x => `<tr><td class="mono">${fmt(x.t)}</td><td>${kindTag(x.kind)}</td><td>${esc(x.part ?? "")}</td><td>${x.what}</td>`
-        + `<td><details><summary>JSON</summary><pre>${esc(JSON.stringify(x.raw, null, 2))}</pre></details></td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">No callbacks stored for this message yet.</div>`;
-    return `<div class="grid2">${statusCard}${billingCard}${clickCard}</div><div class="card"><h2>All callbacks</h2>${tl}</div>`;
+      ["events", esc(b.events)], ["units", esc(b.units)], ["amount (net)", b.billed ? `${esc(b.amount)} ${esc(b.currency || "")}` : ""]])}</div>`;
+    const clickCard = `<div class="card"><h2>Short URL ${c.clicked ? '<span class="badge b-good">✓ clicked</span>' : '<span class="badge b-neutral">not clicked</span>'}</h2>${kv([
+      ["clicks", esc(c.clicks)], ["visited_count", esc(c.visited_count)], ["links", esc(c.links)],
+      ["first / last", c.first_clicked_at ? `${fmt(c.first_clicked_at)} / ${fmt(c.last_clicked_at)}` : ""], ["last device", esc(c.last_device)]])}</div>`;
+    const recCard = rc.total > 1 ? `<div class="card"><h2>All recipients of this message <span class="muted" style="font-weight:normal">${n0(rc.total)}</span></h2>
+        <div class="toolbar">${Object.entries(rc.by_status || {}).map(([k, v]) => `${statusBadge(k)} <b>${n0(v)}</b>`).join(" &nbsp; ")}</div>
+        <div class="muted">Each recipient has its own id (${esc(r.message_id)}:&lt;n&gt;). Open one from the live feed to see its own status.</div></div>` : "";
+    const tl = (r.timeline || []).map(x => {
+      const what = x.kind === "STATUS" ? `${statusBadge(x.status)} <span class="mono muted">${esc(x.provider_status || "")}</span> <span class="mono muted">${esc(x.mobile || "")}</span>`
+        : x.kind === "BILLING" ? `${esc(x.transaction_type || "")} · ${esc(x.units ?? "")} unit(s) · ${esc(x.amount ?? "")} ${esc(x.currency || "")}`
+        : `link ${esc(x.url_key || "")} · visit #${esc(x.visited_count ?? "")} · ${esc(x.device_type || "")} ${esc(x.browser || "")}`;
+      return `<tr><td class="mono">${fmt(x.created_at)}</td><td>${kindTag(x.kind)}</td><td class="mono">${esc(r.message_id + (x.part != null ? ":" + x.part : ""))}</td><td>${what}</td>`
+        + `<td><details><summary>JSON</summary><pre>${esc(JSON.stringify(x.raw, null, 2))}</pre></details></td></tr>`;
+    }).join("");
+    const tlHtml = tl ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Message ID</th><th>Event</th><th>Raw</th></tr></thead><tbody>${tl}</tbody></table></div>`
+      : `<div class="empty">No callbacks stored for this ${r.part != null ? "recipient" : "message"} yet.</div>`;
+    return `<div class="grid2">${statusCard}${billingCard}${clickCard}</div>${recCard}<div class="card"><h2>Callbacks · ${scope}</h2>${tlHtml}</div>`;
   }
 
   // ---------- bulk verify ----------

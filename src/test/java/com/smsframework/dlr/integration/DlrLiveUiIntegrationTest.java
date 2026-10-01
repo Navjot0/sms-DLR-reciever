@@ -148,6 +148,39 @@ class DlrLiveUiIntegrationTest extends AbstractIntegrationTest {
                 .isEqualTo(1);
     }
 
+    @Test
+    void lookupOfOneRecipientShowsThatRecipientsOwnStatus() {
+        // bulk campaign: one message_id, one ":<n>" per recipient
+        postDlr(TestPayloads.defaultSms("camp-1:1", "919000000001", "DELIVRD", "000", "2026-10-01 10:00:00", ""),
+                Map.of("X-DLR-Source", "DEFAULT_SMS"));
+        postDlr(TestPayloads.defaultSms("camp-1:2", "919000000002", "REJECTD", "002", "2026-10-01 10:00:05", ""),
+                Map.of("X-DLR-Source", "DEFAULT_SMS"));
+        postDlr(TestPayloads.billing("camp-1", 2, "debit", "0.01"), Map.of());
+
+        JsonNode r = getJson("/api/v1/dlr/live/message?id=camp-1:2");
+        assertThat(r.get("message_id").asText()).isEqualTo("camp-1");
+        assertThat(r.get("part").asInt()).isEqualTo(2);
+        assertThat(r.at("/status/status").asText()).isEqualTo("REJECTED");
+        assertThat(r.at("/status/mobile").asText()).isEqualTo("919000000002");
+        assertThat(r.at("/status/provider_status").asText()).isEqualTo("REJECTD");
+        assertThat(r.at("/billing/events").asLong()).isEqualTo(1);
+        assertThat(r.at("/recipients/total").asLong()).isEqualTo(2);
+        assertThat(r.at("/recipients/by_status/DELIVERED").asLong()).isEqualTo(1);
+        assertThat(r.at("/recipients/by_status/REJECTED").asLong()).isEqualTo(1);
+        for (JsonNode x : r.get("timeline")) {
+            assertThat(x.get("part").asInt()).isEqualTo(2);
+        }
+
+        JsonNode first = getJson("/api/v1/dlr/live/message?id=camp-1:1");
+        assertThat(first.at("/status/status").asText()).isEqualTo("DELIVERED");
+        assertThat(first.at("/status/mobile").asText()).isEqualTo("919000000001");
+
+        JsonNode whole = getJson("/api/v1/dlr/live/message?id=camp-1");
+        assertThat(whole.get("part").isNull()).isTrue();
+        assertThat(whole.at("/billing/events").asLong()).isEqualTo(2);
+        assertThat(whole.get("timeline")).hasSize(4);
+    }
+
     private static JsonNode category(JsonNode stats, String key) {
         for (JsonNode c : stats.get("categories")) {
             if (key.equals(c.get("key").asText())) {

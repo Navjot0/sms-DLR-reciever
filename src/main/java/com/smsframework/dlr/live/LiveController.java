@@ -15,9 +15,21 @@ import org.springframework.web.bind.annotation.ResponseBody;
 public class LiveController {
 
     private final LiveRepository repository;
+    private final LiveMessageRepository messages;
 
-    public LiveController(LiveRepository repository) {
+    public LiveController(LiveRepository repository, LiveMessageRepository messages) {
         this.repository = repository;
+        this.messages = messages;
+    }
+
+    /**
+     * Lookup for the UI. "&lt;id&gt;:2329" returns that one recipient's status, billing, clicks and callbacks
+     * (bulk campaigns share one message_id across recipients); a bare id returns the message as a whole.
+     */
+    @GetMapping(value = "/api/v1/dlr/live/message", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public java.util.Map<String, Object> message(@RequestParam("id") String id) {
+        return messages.lookup(id);
     }
 
     @GetMapping({"/", "/ui"})
