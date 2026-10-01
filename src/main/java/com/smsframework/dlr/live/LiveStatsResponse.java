@@ -3,22 +3,35 @@ package com.smsframework.dlr.live;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Map;
 
-/** Response of GET /api/v1/dlr/live/stats: totals + per-minute activity for the last N minutes. */
+/**
+ * Response of GET /api/v1/dlr/live/stats: counts per category (Default SMS, WebEngage, Short URL)
+ * plus a time series for the chart. Counts only include accepted callbacks: duplicates and invalid
+ * (rejected) payloads are left out.
+ */
 public record LiveStatsResponse(
-        int windowMinutes,
-        OffsetDateTime from,
+        int windowMinutes,          // 0 = all time
+        OffsetDateTime from,        // null for all time
         OffsetDateTime to,
-        long statusCallbacks,
-        Map<String, Long> byNormalizedStatus,   // APPLIED status DLRs only
-        Map<String, Long> byProcessingStatus,   // every status callback
-        long billingEvents,
-        BigDecimal billedAmount,
-        String billedCurrency,
-        long clicks,
-        List<Bucket> perMinute) {
+        Totals totals,
+        List<Category> categories,
+        int chartMinutes,           // range the chart covers
+        int bucketMinutes,          // 1 (per minute) or 60 (per hour)
+        List<Bucket> series) {
 
-    public record Bucket(OffsetDateTime minute, long status, long billing, long click) {
+    public record Totals(long dlrs, long delivered, long failed, long rejected, long pending,
+                         long billingEvents, BigDecimal billedAmount, String billedCurrency, long clicks) {
+    }
+
+    /**
+     * One category card. For DEFAULT_SMS / WEBENGAGE the DLR fields are filled; for SHORT_URL the click fields.
+     */
+    public record Category(String key, String label,
+                           long dlrs, long delivered, long failed, long rejected, long pending,
+                           long billingEvents, BigDecimal billedAmount, String billedCurrency,
+                           long clicks, long clickedMessages, long links) {
+    }
+
+    public record Bucket(OffsetDateTime time, long defaultSms, long webengage, long shortUrl) {
     }
 }

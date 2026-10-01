@@ -11,6 +11,7 @@
     --text: #0b0b0b; --text-2: #52514e; --text-3: #7a7974;
     --accent: #2a78d6;
     --s-status: #2a78d6; --s-billing: #eb6834; --s-click: #1baf7a;
+    --c-sms: #2a78d6; --c-we: #eb6834; --c-url: #1baf7a;
     --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
     --good-ink: #006300; --critical-ink: #b42323; --warning-ink: #7a5200;
     --flash: #fff6d6;
@@ -23,6 +24,7 @@
       --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
       --accent: #3987e5;
       --s-status: #3987e5; --s-billing: #d95926; --s-click: #199e70;
+      --c-sms: #3987e5; --c-we: #d95926; --c-url: #199e70;
       --good-ink: #5fd35f; --critical-ink: #ff8a8a; --warning-ink: #fab219;
       --flash: #3a3420;
     }
@@ -33,6 +35,7 @@
     --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
     --accent: #3987e5;
     --s-status: #3987e5; --s-billing: #d95926; --s-click: #199e70;
+    --c-sms: #3987e5; --c-we: #d95926; --c-url: #199e70;
     --good-ink: #5fd35f; --critical-ink: #ff8a8a; --warning-ink: #fab219;
     --flash: #3a3420;
   }
@@ -103,6 +106,20 @@
   .err { color: var(--critical-ink); }
   textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 12px; }
   .hidden { display: none !important; }
+  .tiles .tile .value.good { color: var(--good-ink); } .tiles .tile .value.bad { color: var(--critical-ink); }
+  .tiles .tile .value.warn { color: var(--warning-ink); }
+  .cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .cat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; border-top: 4px solid var(--cc); }
+  .cat h3 { margin: 0 0 10px; font-size: 15px; display: flex; align-items: baseline; gap: 8px; }
+  .cat h3 .muted { font-weight: normal; font-size: 12px; }
+  .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; }
+  .num .l { color: var(--text-2); font-size: 12px; display: flex; align-items: center; gap: 5px; }
+  .num .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .num .s { color: var(--text-3); font-size: 12px; }
+  .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .meter { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); margin: 12px 0 4px; gap: 2px; }
+  .meter span { display: block; height: 100%; }
+  .meter-legend { font-size: 12px; color: var(--text-2); }
   @media (max-width: 640px) { header, main { padding-left: 12px; padding-right: 12px; } dl.kv { grid-template-columns: 110px 1fr; } }
 </style>
 </head>
@@ -116,6 +133,7 @@
     <select id="windowSel" aria-label="Stats window">
       <option value="15">15 min</option><option value="60" selected>1 hour</option>
       <option value="360">6 hours</option><option value="1440">24 hours</option>
+      <option value="10080">7 days</option><option value="43200">30 days</option><option value="0">All time</option>
     </select>
   </label>
   <label class="pill">Refresh
@@ -130,13 +148,14 @@
 
 <main>
   <section class="tiles" id="tiles" aria-label="Totals for the selected window"></section>
+  <section class="cats" id="cats" aria-label="Counts per category"></section>
 
   <section class="card">
-    <h2>Callbacks per minute
+    <h2><span id="chartTitle">DLRs per minute</span>
       <span class="legend">
-        <span><i style="background:var(--s-status)"></i>Status DLR</span>
-        <span><i style="background:var(--s-billing)"></i>Billing</span>
-        <span><i style="background:var(--s-click)"></i>Click</span>
+        <span><i style="background:var(--c-sms)"></i>Default SMS</span>
+        <span><i style="background:var(--c-we)"></i>WebEngage</span>
+        <span><i style="background:var(--c-url)"></i>Short URL clicks</span>
       </span>
     </h2>
     <div id="chart"><div class="tooltip" id="tip"></div></div>
@@ -147,18 +166,18 @@
       <button class="tab active" data-tab="feed">Live feed</button>
       <button class="tab" data-tab="lookup">Message lookup</button>
       <button class="tab" data-tab="verify">Bulk verify</button>
-      <button class="tab" data-tab="rejected">Rejected</button>
     </div>
 
     <!-- Live feed -->
     <div id="tab-feed">
       <div class="toolbar">
-        <label><input type="checkbox" class="kindF" value="STATUS" checked> Status</label>
-        <label><input type="checkbox" class="kindF" value="BILLING" checked> Billing</label>
-        <label><input type="checkbox" class="kindF" value="CLICK" checked> Click</label>
-        <select id="procF" aria-label="Processing status">
-          <option value="">All processing</option><option>APPLIED</option><option>IGNORED</option>
-          <option>DUPLICATE</option><option>REJECTED</option>
+        <label><input type="checkbox" class="catF" value="DEFAULT_SMS" checked> Default SMS</label>
+        <label><input type="checkbox" class="catF" value="WEBENGAGE" checked> WebEngage</label>
+        <label><input type="checkbox" class="catF" value="SHORT_URL" checked> Short URL</label>
+        <label><input type="checkbox" id="billingF" checked> Billing</label>
+        <select id="statusF" aria-label="Status">
+          <option value="">All statuses</option><option>DELIVERED</option><option>FAILED</option>
+          <option>REJECTED</option><option>SENT</option>
         </select>
         <input type="text" id="searchF" placeholder="Filter by message id, mobile, status…" style="min-width:260px">
         <span class="spacer"></span>
@@ -167,8 +186,8 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Received</th><th>Type</th><th>Message ID</th><th>Part</th><th>Mobile</th>
-            <th>Status</th><th>Processing</th><th>Details</th><th>Source</th></tr></thead>
+          <thead><tr><th>Received</th><th>Category</th><th>Type</th><th>Message ID</th><th>Part</th><th>Mobile</th>
+            <th>Status</th><th>Details</th></tr></thead>
           <tbody id="feedBody"></tbody>
         </table>
         <div class="empty" id="feedEmpty">Waiting for callbacks…</div>
@@ -208,17 +227,6 @@
         <tbody id="verifyBody"></tbody></table></div>
     </div>
 
-    <!-- Rejected -->
-    <div id="tab-rejected" class="hidden">
-      <div class="toolbar">
-        <button id="rejRefresh">Refresh</button>
-        <button id="rejReprocessAll">Reprocess all not yet reprocessed</button>
-        <span class="muted" id="rejMsg"></span>
-      </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Received</th><th>Type</th><th>Event</th><th>Message ID</th><th>Reason</th><th>Note</th><th>Raw payload</th><th></th></tr></thead>
-        <tbody id="rejBody"></tbody></table></div>
-    </div>
   </section>
 </main>
 
@@ -255,13 +263,11 @@
     const icon = cls === "b-good" ? "✓ " : cls === "b-bad" ? "✕ " : cls === "b-warn" ? "… " : "";
     return `<span class="badge ${cls}">${icon}${esc(s)}</span>`;
   }
-  function procBadge(p) {
-    if (!p) return "";
-    const cls = p === "APPLIED" || p === "PARTIAL" ? "b-good" : p === "REJECTED" ? "b-bad" : "b-neutral";
-    return `<span class="badge ${cls}">${esc(p)}</span>`;
-  }
-  const KIND = { STATUS: ["Status", "var(--s-status)"], BILLING: ["Billing", "var(--s-billing)"], CLICK: ["Click", "var(--s-click)"] };
-  const kindTag = (k) => `<span class="kind"><i style="background:${KIND[k][1]}"></i>${KIND[k][0]}</span>`;
+  const CAT = { DEFAULT_SMS: ["Default SMS", "var(--c-sms)"], WEBENGAGE: ["WebEngage", "var(--c-we)"], SHORT_URL: ["Short URL", "var(--c-url)"] };
+  const catOf = (it) => it.kind === "CLICK" ? "SHORT_URL" : (it.source || "");
+  const catTag = (k) => CAT[k] ? `<span class="kind"><i style="background:${CAT[k][1]}"></i>${CAT[k][0]}</span>` : esc(k);
+  const KIND = { STATUS: "Status DLR", BILLING: "Billing", CLICK: "Click" };
+  const kindTag = (k) => esc(KIND[k] || k);
 
   // ---------- theme ----------
   const savedTheme = store.get("dlr.theme", "");
@@ -281,9 +287,8 @@
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => showTab(t.dataset.tab));
   function showTab(name) {
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-    ["feed", "lookup", "verify", "rejected"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
+    ["feed", "lookup", "verify"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
     store.set("dlr.tab", name);
-    if (name === "rejected") loadRejected();
   }
 
   // ---------- health ----------
@@ -304,22 +309,46 @@
     try { stats = await api(`/api/v1/dlr/live/stats?minutes=${$("windowSel").value}`); renderTiles(); renderChart(); }
     catch (e) { $("tiles").innerHTML = `<div class="tile err">Stats unavailable: ${esc(e.message)}</div>`; }
   }
+  const n0 = (v) => Number(v || 0).toLocaleString();
+  const money = (amt, cur) => `${amt == null ? 0 : amt}${cur ? " " + cur : ""}`;
   function renderTiles() {
-    const s = stats, by = s.byNormalizedStatus || s.by_normalized_status || {}, proc = s.byProcessingStatus || s.by_processing_status || {};
-    const g = (o, k) => o[k] || 0;
+    const t = stats.totals || {};
     const tiles = [
-      ["Status callbacks", s.statusCallbacks ?? s.status_callbacks, "all processing outcomes"],
-      ["Delivered", g(by, "DELIVERED"), "state changes"],
-      ["Sent (awaiting)", g(by, "SENT"), "state changes"],
-      ["Failed / expired", g(by, "FAILED") + g(by, "EXPIRED") + g(by, "REJECTED"), "state changes"],
-      ["Rejected callbacks", g(proc, "REJECTED"), "invalid / malformed"],
-      ["Duplicates", g(proc, "DUPLICATE"), `${g(proc, "IGNORED")} ignored`],
-      ["Billed", `${s.billedAmount ?? s.billed_amount ?? 0}${(s.billedCurrency || s.billed_currency) ? " " + (s.billedCurrency || s.billed_currency) : ""}`,
-        `${s.billingEvents ?? s.billing_events ?? 0} billing events`],
-      ["Clicks", s.clicks ?? 0, "short-link clicks"],
+      ["Total DLRs", n0(t.dlrs), "", "status DLRs received"],
+      ["Delivered", n0(t.delivered), "good", pct(t.delivered, t.dlrs)],
+      ["Failed", n0(t.failed), "bad", pct(t.failed, t.dlrs) + " · incl. expired"],
+      ["Rejected", n0(t.rejected), "bad", pct(t.rejected, t.dlrs)],
+      ["Billing", n0(t.billing_events), "", money(t.billed_amount, t.billed_currency)],
+      ["Short URL clicks", n0(t.clicks), "", "link visits"],
     ];
-    $("tiles").innerHTML = tiles.map(([l, v, sub]) =>
-      `<div class="tile"><div class="label">${esc(l)}</div><div class="value">${esc(v)}</div><div class="sub">${esc(sub)}</div></div>`).join("");
+    $("tiles").innerHTML = tiles.map(([l, v, cls, sub]) =>
+      `<div class="tile"><div class="label">${esc(l)}</div><div class="value ${cls}">${esc(v)}</div><div class="sub">${esc(sub)}</div></div>`).join("");
+    $("cats").innerHTML = (stats.categories || []).map(renderCategory).join("");
+  }
+  function pct(a, b) { return b ? `${(100 * (a || 0) / b).toFixed(1)}%` : "—"; }
+  function num(label, value, sub, sw) {
+    return `<div class="num"><div class="l">${sw ? `<i class="sw" style="background:${sw}"></i>` : ""}${esc(label)}</div>`
+      + `<div class="v">${esc(value)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</div>`;
+  }
+  function renderCategory(c) {
+    const color = (CAT[c.key] || [c.label, "var(--text-3)"])[1];
+    if (c.key === "SHORT_URL") {
+      return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">short-link clicks</span></h3><div class="nums">`
+        + num("Clicks", n0(c.clicks)) + num("Messages clicked", n0(c.clicked_messages)) + num("Links", n0(c.links))
+        + `</div></div>`;
+    }
+    const total = c.dlrs || 0;
+    const seg = (v, col) => v ? `<span style="width:${100 * v / total}%;background:${col}" title=""></span>` : "";
+    return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">${n0(total)} DLRs</span></h3><div class="nums">`
+      + num("Delivered", n0(c.delivered), pct(c.delivered, total), "var(--good)")
+      + num("Failed", n0(c.failed), pct(c.failed, total), "var(--critical)")
+      + num("Rejected", n0(c.rejected), pct(c.rejected, total), "var(--serious)")
+      + num("Sent / pending", n0(c.pending), pct(c.pending, total), "var(--warning)")
+      + num("Billing", n0(c.billing_events), money(c.billed_amount, c.billed_currency))
+      + num("Total DLRs", n0(total))
+      + `</div>${total ? `<div class="meter" role="img" aria-label="Delivered ${c.delivered}, failed ${c.failed}, rejected ${c.rejected}, pending ${c.pending}">`
+      + seg(c.delivered, "var(--good)") + seg(c.failed, "var(--critical)") + seg(c.rejected, "var(--serious)") + seg(c.pending, "var(--warning)")
+      + `</div>` : ""}</div>`;
   }
 
   // ---------- chart: stacked bars per minute ----------
@@ -327,17 +356,19 @@
     const box = $("chart"), tip = $("tip");
     box.querySelectorAll("svg").forEach(n => n.remove());
     if (!stats) return;
-    const minutes = +stats.windowMinutes || +stats.window_minutes || 60;
-    const per = stats.perMinute || stats.per_minute || [];
-    const map = new Map(per.map(b => [new Date(b.minute).getTime(), b]));
-    const to = new Date(stats.to); to.setSeconds(0, 0);
-    const n = Math.min(minutes, 360);            // longer windows: show the last 6 hours of minutes
-    const step = minutes > 360 ? Math.ceil(minutes / 360) : 1;
+    const bucketMin = stats.bucket_minutes || 1, chartMin = stats.chart_minutes || 60;
+    const per = stats.series || [];
+    const map = new Map(per.map(b => [new Date(b.time).getTime(), b]));
+    const to = new Date(stats.to); to.setUTCSeconds(0, 0); if (bucketMin === 60) to.setUTCMinutes(0);  // DB buckets are UTC hours (IST is +5:30)
+    const total = Math.ceil(chartMin / bucketMin);
+    const n = Math.min(total, 360), step = Math.ceil(total / n);
+    $("chartTitle").textContent = (bucketMin === 60 ? "DLRs per hour" : "DLRs per minute")
+      + (stats.window_minutes === 0 ? " (last 7 days)" : "");
     const buckets = [];
-    for (let i = n - 1; i >= 0; i--) {
-      const t0 = to.getTime() - i * step * 60000;
+    for (let i = Math.ceil(total / step) - 1; i >= 0; i--) {
+      const t0 = to.getTime() - i * step * bucketMin * 60000;
       let s = 0, b = 0, c = 0;
-      for (let j = 0; j < step; j++) { const m = map.get(t0 - j * 60000); if (m) { s += m.status; b += m.billing; c += m.click; } }
+      for (let j = 0; j < step; j++) { const m = map.get(t0 - j * bucketMin * 60000); if (m) { s += m.default_sms; b += m.webengage; c += m.short_url; } }
       buckets.push({ t: t0, s, b, c });
     }
     const W = box.clientWidth || 800, H = box.clientHeight || 150, padL = 34, padB = 18, padT = 6;
@@ -346,8 +377,8 @@
     const bw = (W - padL) / buckets.length;
     const y = v => padT + (H - padT - padB) * (1 - v / nice);
     const css = getComputedStyle(document.documentElement);
-    const col = { s: css.getPropertyValue("--s-status"), b: css.getPropertyValue("--s-billing"), c: css.getPropertyValue("--s-click") };
-    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Callbacks per minute">`;
+    const col = { s: css.getPropertyValue("--c-sms"), b: css.getPropertyValue("--c-we"), c: css.getPropertyValue("--c-url") };
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="DLRs over time by category">`;
     for (let i = 0; i <= 4; i++) {                // recessive grid
       const v = nice * i / 4, yy = y(v);
       svg += `<line x1="${padL}" x2="${W}" y1="${yy}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
@@ -369,17 +400,19 @@
     buckets.forEach((x, i) => {
       if (i % labelEvery) return;
       const d = new Date(x.t);
-      svg += `<text x="${padL + i * bw + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--text-3)">${pad(d.getHours())}:${pad(d.getMinutes())}</text>`;
+      const lbl = bucketMin === 60 ? `${pad(d.getDate())}-${pad(d.getMonth() + 1)} ${pad(d.getHours())}h` : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      svg += `<text x="${padL + i * bw + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--text-3)">${lbl}</text>`;
     });
     svg += `</svg>`;
     box.insertAdjacentHTML("afterbegin", svg);
     box.querySelectorAll(".hit").forEach(r => {
       r.onmousemove = (ev) => {
         const x = buckets[+r.dataset.i], d = new Date(x.t);
-        tip.innerHTML = `<b>${pad(d.getHours())}:${pad(d.getMinutes())}${step > 1 ? ` (+${step - 1} min)` : ""}</b><br>`
-          + `<span class="kind"><i style="background:var(--s-status)"></i>Status ${x.s}</span><br>`
-          + `<span class="kind"><i style="background:var(--s-billing)"></i>Billing ${x.b}</span><br>`
-          + `<span class="kind"><i style="background:var(--s-click)"></i>Click ${x.c}</span>`;
+        const span = step * bucketMin;
+        tip.innerHTML = `<b>${fmt(x.t)}${span > 1 ? ` (+${span} min)` : ""}</b><br>`
+          + `<span class="kind"><i style="background:var(--c-sms)"></i>Default SMS ${x.s}</span><br>`
+          + `<span class="kind"><i style="background:var(--c-we)"></i>WebEngage ${x.b}</span><br>`
+          + `<span class="kind"><i style="background:var(--c-url)"></i>Short URL clicks ${x.c}</span>`;
         const bx = box.getBoundingClientRect();
         tip.style.display = "block";
         let left = ev.clientX - bx.left + 12;
@@ -422,28 +455,30 @@
   function details(it) {
     if (it.kind === "BILLING") return `${esc(it.transaction_type || "")} · ${esc(it.units ?? "")} unit(s) · ${esc(it.total_amount ?? "")} ${esc(it.currency || "")}`;
     if (it.kind === "CLICK") return `link ${esc(it.url_key || "")} · visit #${esc(it.visited_count ?? "")} · ${esc(it.device_type || "")}`;
-    return it.note ? `<span class="muted">${esc(it.note)}</span>` : "";
+    return "";
   }
   function renderFeed(newKeys) {
-    const kinds = new Set([...document.querySelectorAll(".kindF:checked")].map(c => c.value));
-    const proc = $("procF").value, q = $("searchF").value.trim().toLowerCase();
-    const rows = feed.filter(it => kinds.has(it.kind) && (!proc || it.processing_status === proc)
-      && (!q || [it.message_id, it.provider_message_id, it.mobile, it.provider_status, it.normalized_status, it.note, it.url_key]
+    const cats = new Set([...document.querySelectorAll(".catF:checked")].map(c => c.value));
+    const showBilling = $("billingF").checked, st = $("statusF").value, q = $("searchF").value.trim().toLowerCase();
+    const rows = feed.filter(it => cats.has(catOf(it)) && (showBilling || it.kind !== "BILLING")
+      && (!st || it.normalized_status === st)
+      && (!q || [it.message_id, it.provider_message_id, it.mobile, it.provider_status, it.normalized_status, it.url_key]
             .some(v => v && String(v).toLowerCase().includes(q))));
     $("feedBody").innerHTML = rows.slice(0, 500).map(it => {
       const key = it.kind + ":" + it.id;
       const mid = it.message_id ? `<a class="msg mono" data-id="${esc(it.message_id)}">${esc(it.message_id)}</a>` : `<span class="muted">—</span>`;
       const status = it.kind === "STATUS"
         ? `${statusBadge(it.normalized_status)} <span class="muted mono">${esc(it.provider_status || "")}</span>` : "";
-      return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono">${fmt(it.created_at)}</td><td>${kindTag(it.kind)}</td>`
+      return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono">${fmt(it.created_at)}</td><td>${catTag(catOf(it))}</td><td>${kindTag(it.kind)}</td>`
         + `<td>${mid}</td><td>${esc(it.part_number ?? "")}</td><td class="mono">${esc(it.mobile || "")}</td><td>${status}</td>`
-        + `<td>${procBadge(it.processing_status)}</td><td>${details(it)}</td><td class="muted">${esc(it.source || "")}</td></tr>`;
+        + `<td>${details(it)}</td></tr>`;
     }).join("");
     $("feedEmpty").classList.toggle("hidden", rows.length > 0);
     $("feedCount").textContent = `${rows.length} shown · ${feed.length} loaded`;
   }
-  document.querySelectorAll(".kindF").forEach(c => c.onchange = () => renderFeed(new Set()));
-  $("procF").onchange = () => renderFeed(new Set());
+  document.querySelectorAll(".catF").forEach(c => c.onchange = () => renderFeed(new Set()));
+  $("billingF").onchange = () => renderFeed(new Set());
+  $("statusF").onchange = () => renderFeed(new Set());
   $("searchF").oninput = () => renderFeed(new Set());
   $("clearFeed").onclick = () => { feed = []; renderFeed(new Set()); };
   $("feedBody").onclick = (e) => { const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id); };
@@ -472,10 +507,9 @@
     const parts = (st.parts || []).map(p => `${esc(p.part)}: ${statusBadge(p.status)} <span class="muted mono">${esc(p.provider_status || "")}</span>`).join("<br>");
     const statusCard = `<div class="card"><h2>Delivery ${statusBadge(st.status)}</h2>${kv([
       ["message_id", `<span class="mono">${esc(st.message_id)}</span>`], ["received", esc(st.received)],
-      ["provider_status", esc(st.provider_status)], ["status_code", esc(st.status_code)], ["source", esc(st.source)],
+      ["provider_status", esc(st.provider_status)], ["status_code", esc(st.status_code)], ["category", st.source ? catTag(st.source) : ""],
       ["mobile", esc(st.mobile)], ["units", esc(st.units)], ["received_at", fmt(st.received_at)],
-      ["correlation_id", esc(st.correlation_id)], ["events / duplicates", st.received ? `${esc(st.event_count)} / ${esc(st.duplicate_count)}` : ""],
-      ["parts", parts], ["rejected callbacks", st.rejected_events ? `${esc(st.rejected_events)} — ${esc(st.last_rejection_reason)}` : ""]])}</div>`;
+      ["correlation_id", esc(st.correlation_id)], ["parts", parts]])}</div>`;
     const billingCard = `<div class="card"><h2>Billing ${b.billed ? '<span class="badge b-good">✓ billed</span>' : '<span class="badge b-warn">… not billed</span>'}</h2>${kv([
       ["events", esc(b.events)], ["parts", esc(b.parts)], ["units (net)", esc(b.units)],
       ["amount (net)", b.total_amount != null ? `${esc(b.total_amount)} ${esc(b.currency || "")}` : ""],
@@ -488,9 +522,11 @@
     (st.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "STATUS", what: `${statusBadge(e.normalized_status)} <span class="mono muted">${esc(e.provider_status || "")}</span>`, proc: e.processing_status, note: e.rejection_reason || e.processing_note, raw: e.raw_payload, part: e.part_number }));
     (bill.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "BILLING", what: `${esc(e.transaction_type || "")} ${esc(e.units ?? "")} unit(s) ${esc(e.total_amount ?? "")} ${esc(e.currency || "")}`, proc: e.processing_status, note: e.rejection_reason || e.processing_note, raw: e.raw_event, part: e.part_number }));
     (clk.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "CLICK", what: `link ${esc(e.url_key || "")} · visit #${esc(e.visited_count ?? "")} · ${esc(e.device_type || "")} ${esc(e.browser || "")}`, proc: e.processing_status, note: e.processing_note, raw: e.raw_payload, part: e.part_number }));
+    const shown = timeline.filter(x => x.proc !== "DUPLICATE" && x.proc !== "REJECTED");
+    timeline.length = 0; timeline.push(...shown);
     timeline.sort((a, b) => new Date(a.t) - new Date(b.t));
-    const tl = timeline.length ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Part</th><th>Event</th><th>Processing</th><th>Note</th><th>Raw</th></tr></thead><tbody>${
-      timeline.map(x => `<tr><td class="mono">${fmt(x.t)}</td><td>${kindTag(x.kind)}</td><td>${esc(x.part ?? "")}</td><td>${x.what}</td><td>${procBadge(x.proc)}</td><td class="muted">${esc(x.note || "")}</td>`
+    const tl = timeline.length ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Part</th><th>Event</th><th>Raw</th></tr></thead><tbody>${
+      timeline.map(x => `<tr><td class="mono">${fmt(x.t)}</td><td>${kindTag(x.kind)}</td><td>${esc(x.part ?? "")}</td><td>${x.what}</td>`
         + `<td><details><summary>JSON</summary><pre>${esc(JSON.stringify(x.raw, null, 2))}</pre></details></td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">No callbacks stored for this message yet.</div>`;
     return `<div class="grid2">${statusCard}${billingCard}${clickCard}</div><div class="card"><h2>All callbacks</h2>${tl}</div>`;
@@ -520,39 +556,6 @@
     } catch (e) { $("verifySummary").innerHTML = `<span class="err">Verify failed: ${esc(e.message)}</span>`; }
   };
   $("verifyBody").onclick = (e) => { const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id); };
-
-  // ---------- rejected ----------
-  async function loadRejected() {
-    try {
-      const [cb, be] = await Promise.all([api("/api/v1/dlr/events/rejected?limit=200"), api("/api/v1/dlr/events/billing/rejected?limit=200")]);
-      const rows = cb.map(e => ({ t: e.created_at, kind: "STATUS", id: e.id, mid: e.message_id, reason: e.rejection_reason, note: e.processing_note, raw: e.raw_payload, canReprocess: !(e.processing_note || "").startsWith("reprocess") }))
-        .concat(be.map(e => ({ t: e.created_at, kind: "BILLING", id: e.id, mid: e.message_id, reason: e.rejection_reason, note: e.processing_note, raw: e.raw_event, canReprocess: false })))
-        .sort((a, b) => new Date(b.t) - new Date(a.t));
-      $("rejBody").innerHTML = rows.length ? rows.map(r => `<tr><td class="mono">${fmt(r.t)}</td><td>${kindTag(r.kind)}</td><td class="mono">${esc(r.id)}</td>`
-        + `<td>${r.mid ? `<a class="msg mono" data-id="${esc(r.mid)}">${esc(r.mid)}</a>` : '<span class="muted">—</span>'}</td>`
-        + `<td class="err">${esc(r.reason || "")}</td><td class="muted">${esc(r.note || "")}</td>`
-        + `<td><details><summary>JSON</summary><pre>${esc(JSON.stringify(r.raw, null, 2))}</pre></details></td>`
-        + `<td>${r.canReprocess ? `<button data-reprocess="${esc(r.id)}">Reprocess</button>` : ""}</td></tr>`).join("")
-        : `<tr><td colspan="8" class="empty">No rejected callbacks.</td></tr>`;
-    } catch (e) { $("rejBody").innerHTML = `<tr><td colspan="8" class="err">${esc(e.message)}</td></tr>`; }
-  }
-  $("rejRefresh").onclick = loadRejected;
-  $("rejBody").onclick = async (e) => {
-    const a = e.target.closest("a.msg"); if (a) return openLookup(a.dataset.id);
-    const b = e.target.closest("button[data-reprocess]"); if (!b) return;
-    b.disabled = true;
-    try { const r = await api(`/api/v1/dlr/events/${b.dataset.reprocess}/reprocess`, { method: "POST" });
-      $("rejMsg").textContent = `Event ${b.dataset.reprocess} → ${r.processing_status}${r.rejection_reason ? " (" + r.rejection_reason + ")" : ""}`; }
-    catch (err) { $("rejMsg").textContent = `Reprocess failed: ${err.message}`; }
-    loadRejected();
-  };
-  $("rejReprocessAll").onclick = async () => {
-    if (!confirm("Reprocess every rejected callback that has not been reprocessed yet?")) return;
-    try { const r = await api("/api/v1/dlr/events/rejected/reprocess?limit=500", { method: "POST" });
-      $("rejMsg").textContent = `Attempted ${r.attempted}: ${r.applied} applied, ${r.duplicate} duplicate, ${r.ignored} ignored, ${r.still_rejected} still rejected, ${r.skipped} skipped`; }
-    catch (err) { $("rejMsg").textContent = `Reprocess failed: ${err.message}`; }
-    loadRejected();
-  };
 
   // ---------- loop ----------
   async function refreshAll(resetFeed) {

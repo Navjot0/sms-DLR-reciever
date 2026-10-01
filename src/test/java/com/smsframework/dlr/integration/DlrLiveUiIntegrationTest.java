@@ -52,28 +52,79 @@ class DlrLiveUiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void statsCountTheWindow() {
-        postDlr(TestPayloads.defaultSms("st-1", "DELIVRD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));
-        postDlr(TestPayloads.defaultSms("st-1", "DELIVRD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));   // duplicate
-        postDlr(TestPayloads.defaultSms("st-2", "UNDELIV"), Map.of("X-DLR-Source", "DEFAULT_SMS"));
+    void feedHidesDuplicateAndInvalidCallbacks() {
+        postDlr(TestPayloads.defaultSms("hide-1", "DELIVRD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));
+        postDlr(TestPayloads.defaultSms("hide-1", "DELIVRD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));   // duplicate
         postDlr("{broken", Map.of());
+
+        JsonNode feed = getJson("/api/v1/dlr/live/feed");
+        assertThat(feed.get("items")).hasSize(1);
+        assertThat(feed.at("/items/0/message_id").asText()).isEqualTo("hide-1");
+    }
+
+    @Test
+    void statsCountPerCategory() {
+        postDlr(TestPayloads.defaultSms("st-1", "DELIVRD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));
+        postDlr(TestPayloads.defaultSms("st-1", "DELIVRD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));   // duplicate: not counted
+        postDlr(TestPayloads.defaultSms("st-2", "UNDELIV"), Map.of("X-DLR-Source", "DEFAULT_SMS"));
+        postDlr(TestPayloads.defaultSms("st-3", "REJECTD"), Map.of("X-DLR-Source", "DEFAULT_SMS"));
+        postDlr(TestPayloads.webEngage("we-1", "sms_delivered", "0"), Map.of("X-DLR-Source", "WEBENGAGE"));
+        postDlr(TestPayloads.webEngage("we-2", "sms_sent", "0"), Map.of("X-DLR-Source", "WEBENGAGE"));
+        postDlr("{broken", Map.of());                                                                   // invalid: not counted
         postDlr(TestPayloads.billing("st-1", 2, "debit", "2"), Map.of());
         postDlr(TestPayloads.CLICK_EXAMPLE, Map.of());
+        postDlr(TestPayloads.CLICK_EXAMPLE_2, Map.of());
 
         JsonNode s = getJson("/api/v1/dlr/live/stats?minutes=60");
-        assertThat(s.get("status_callbacks").asLong()).isEqualTo(4);
-        assertThat(s.at("/by_normalized_status/DELIVERED").asLong()).isEqualTo(1);
-        assertThat(s.at("/by_normalized_status/FAILED").asLong()).isEqualTo(1);
-        assertThat(s.at("/by_processing_status/DUPLICATE").asLong()).isEqualTo(1);
-        assertThat(s.at("/by_processing_status/REJECTED").asLong()).isEqualTo(1);
-        assertThat(s.get("billing_events").asLong()).isEqualTo(2);
-        assertThat(s.get("billed_amount").decimalValue()).isEqualByComparingTo("4");
-        assertThat(s.get("billed_currency").asText()).isEqualTo("INR");
-        assertThat(s.get("clicks").asLong()).isEqualTo(1);
-        long perMinute = 0;
-        for (JsonNode b : s.get("per_minute")) {
-            perMinute += b.get("status").asLong() + b.get("billing").asLong() + b.get("click").asLong();
+        JsonNode t = s.get("totals");
+        assertThat(t.get("dlrs").asLong()).isEqualTo(5);
+        assertThat(t.get("delivered").asLong()).isEqualTo(2);
+        assertThat(t.get("failed").asLong()).isEqualTo(1);
+        assertThat(t.get("rejected").asLong()).isEqualTo(1);
+        assertThat(t.get("pending").asLong()).isEqualTo(1);
+        assertThat(t.get("billing_events").asLong()).isEqualTo(2);
+        assertThat(t.get("billed_amount").decimalValue()).isEqualByComparingTo("4");
+        assertThat(t.get("billed_currency").asText()).isEqualTo("INR");
+        assertThat(t.get("clicks").asLong()).isEqualTo(2);
+
+        JsonNode sms = category(s, "DEFAULT_SMS");
+        assertThat(sms.get("label").asText()).isEqualTo("Default SMS");
+        assertThat(sms.get("dlrs").asLong()).isEqualTo(3);
+        assertThat(sms.get("delivered").asLong()).isEqualTo(1);
+        assertThat(sms.get("failed").asLong()).isEqualTo(1);
+        assertThat(sms.get("rejected").asLong()).isEqualTo(1);
+        assertThat(sms.get("billing_events").asLong()).isEqualTo(2);
+
+        JsonNode we = category(s, "WEBENGAGE");
+        assertThat(we.get("dlrs").asLong()).isEqualTo(2);
+        assertThat(we.get("delivered").asLong()).isEqualTo(1);
+        assertThat(we.get("pending").asLong()).isEqualTo(1);
+        assertThat(we.get("billing_events").asLong()).isZero();
+
+        JsonNode url = category(s, "SHORT_URL");
+        assertThat(url.get("label").asText()).isEqualTo("Short URL");
+        assertThat(url.get("clicks").asLong()).isEqualTo(2);
+        assertThat(url.get("links").asLong()).isEqualTo(1);
+
+        long chart = 0;
+        for (JsonNode b : s.get("series")) {
+            chart += b.get("default_sms").asLong() + b.get("webengage").asLong() + b.get("short_url").asLong();
         }
-        assertThat(perMinute).isEqualTo(4 + 2 + 1);
+        assertThat(chart).isEqualTo(3 + 2 + 2);
+        assertThat(s.get("bucket_minutes").asInt()).isEqualTo(1);
+
+        JsonNode all = getJson("/api/v1/dlr/live/stats?minutes=0");
+        assertThat(all.get("window_minutes").asInt()).isZero();
+        assertThat(all.at("/totals/dlrs").asLong()).isEqualTo(5);
+        assertThat(all.get("bucket_minutes").asInt()).isEqualTo(60);
+    }
+
+    private static JsonNode category(JsonNode stats, String key) {
+        for (JsonNode c : stats.get("categories")) {
+            if (key.equals(c.get("key").asText())) {
+                return c;
+            }
+        }
+        throw new AssertionError("category " + key + " missing");
     }
 }

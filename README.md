@@ -106,18 +106,20 @@ The page is served by the receiver itself and needs no build step or external as
 
 | Area | What it shows |
 |---|---|
-| Header | Service and database health, a live/paused indicator, the stats window (15 min to 24 h), the refresh interval, an API key and a light/dark toggle |
-| Tiles | In the window: status callbacks, Delivered / Sent / Failed state changes, rejected callbacks, duplicates and ignored, billed amount and billing events, clicks |
-| Callbacks per minute | Stacked bars for Status DLR, Billing and Click, with a hover tooltip |
-| **Live feed** | Every incoming status DLR, billing event and click, newest first. New rows are highlighted. You can filter by type, by processing status, and by text (message id, mobile, status). Clicking a message id opens the lookup |
+| Header | Service and database health, a live/paused indicator, the time window (15 min to 30 days, or all time), the refresh interval, an API key and a light/dark toggle |
+| Totals | Total DLRs, Delivered, Failed (including expired), Rejected, Billing (events and net amount) and Short URL clicks |
+| Category cards | **Default SMS** and **WebEngage**: Delivered, Failed, Rejected, Sent/pending, Billing and Total DLRs, with percentages and a bar. **Short URL**: clicks, messages clicked and distinct links |
+| Chart | DLRs per minute (per hour for 7 days and longer), stacked by Default SMS, WebEngage and Short URL clicks, with a hover tooltip |
+| **Live feed** | Incoming status DLRs, billing events and clicks, newest first. New rows are highlighted. You can filter by category, show or hide billing, filter by status, and search by message id, mobile or status. Clicking a message id opens the lookup |
 | **Message lookup** | One message, with or without `:part`: delivery state and parts, billing summary, click summary, and every callback as a timeline with its raw JSON. It can auto-refresh. `/ui/?message_id=<id>` links directly to it |
 | **Bulk verify** | Paste ids and choose the expected status, require billing and/or require click. Shows PASS/FAIL, the counts, and a row per id with missing ids marked |
-| **Rejected** | Rejected callbacks and rejected billing events, with the reason and raw JSON. Has a Reprocess button per row and a "reprocess all" button |
+
+Duplicate and invalid (unparseable) callbacks are not counted or shown in the UI. They are still stored, and the `/api/v1/dlr/events/rejected` and reprocess APIs still work.
 
 The UI reads two extra endpoints:
 
 - `GET /api/v1/dlr/live/feed?after_status=&after_billing=&after_click=&limit=` returns the newest events across the three tables plus a cursor. Passing the cursor back returns only newer events.
-- `GET /api/v1/dlr/live/stats?minutes=60` returns the window totals and per-minute buckets.
+- `GET /api/v1/dlr/live/stats?minutes=60` returns the totals, one entry per category (`DEFAULT_SMS`, `WEBENGAGE`, `SHORT_URL`) and the chart series. `minutes=0` means all time.
 
 Both read from PostgreSQL. The UI polls them rather than using server push, so it shows the same data on every instance behind a load balancer.
 

@@ -49,6 +49,7 @@ public class LiveController {
     @GetMapping(value = "/api/v1/dlr/live/stats", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
     public LiveStatsResponse stats(@RequestParam(defaultValue = "60") int minutes) {
-        return repository.stats(Math.max(1, Math.min(minutes, 24 * 60)));
+        // 0 = all time; otherwise 1 minute .. 30 days
+        return repository.stats(minutes <= 0 ? 0 : Math.min(minutes, 30 * 24 * 60));
     }
 }
