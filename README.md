@@ -12,6 +12,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 ## Contents
 
 - [Quick start](#quick-start)
+- [Live UI](#live-ui)
 - [Architecture](#architecture)
 - [API](#api)
 - [Normalization and status mapping](#normalization-and-status-mapping)
@@ -94,6 +95,33 @@ curl -s localhost:8080/actuator/health
 ```
 
 Flyway creates the schema on startup (`src/main/resources/db/migration`).
+
+---
+
+## Live UI
+
+Open **`http://<host>:8080/`** (it redirects to `/ui/`). For example, `http://140.245.230.67:8080/`.
+
+The page is served by the receiver itself and needs no build step or external assets. It refreshes every 2, 5 or 10 seconds:
+
+| Area | What it shows |
+|---|---|
+| Header | Service and database health, a live/paused indicator, the stats window (15 min to 24 h), the refresh interval, an API key and a light/dark toggle |
+| Tiles | In the window: status callbacks, Delivered / Sent / Failed state changes, rejected callbacks, duplicates and ignored, billed amount and billing events, clicks |
+| Callbacks per minute | Stacked bars for Status DLR, Billing and Click, with a hover tooltip |
+| **Live feed** | Every incoming status DLR, billing event and click, newest first. New rows are highlighted. You can filter by type, by processing status, and by text (message id, mobile, status). Clicking a message id opens the lookup |
+| **Message lookup** | One message, with or without `:part`: delivery state and parts, billing summary, click summary, and every callback as a timeline with its raw JSON. It can auto-refresh. `/ui/?message_id=<id>` links directly to it |
+| **Bulk verify** | Paste ids and choose the expected status, require billing and/or require click. Shows PASS/FAIL, the counts, and a row per id with missing ids marked |
+| **Rejected** | Rejected callbacks and rejected billing events, with the reason and raw JSON. Has a Reprocess button per row and a "reprocess all" button |
+
+The UI reads two extra endpoints:
+
+- `GET /api/v1/dlr/live/feed?after_status=&after_billing=&after_click=&limit=` returns the newest events across the three tables plus a cursor. Passing the cursor back returns only newer events.
+- `GET /api/v1/dlr/live/stats?minutes=60` returns the window totals and per-minute buckets.
+
+Both read from PostgreSQL. The UI polls them rather than using server push, so it shows the same data on every instance behind a load balancer.
+
+With `DLR_PROTECT_QUERY_API=true`, click **API key** in the header and enter a key. It is sent as `X-API-Key` and kept in that browser's local storage. The page itself is static and contains no data.
 
 ---
 
@@ -680,6 +708,7 @@ DLR_TEST_DB_URL=jdbc:postgresql://dbhost:5432/dlr_test DLR_TEST_DB_USERNAME=dlr 
 | `DlrFlatPayloadAndReprocessIntegrationTest` | Live-gateway flat payload with no source header, `//api/...` URLs, message id kept on unrecognised payloads, single and bulk reprocessing of rejected rows (idempotent, no loops, non-JSON rows skipped) |
 | `DlrMultipartIntegrationTest` | Status DLR `<id>:1` + 4-part billing correlate (lookup by `<id>` or `<id>:1`, verify with `require_billing`), per-part statuses, part duplicates, V3 backfill of old rows, ids without numeric suffix untouched |
 | `DlrClickIntegrationTest` | Real click payloads (incl. escaped slashes) stored field by field, correlated with the status DLR by `<id>` or `<id>:1`, 2 clicks summed, resend = duplicate, click before status, `require_click` verification, rejected clicks, metrics |
+| `DlrLiveUiIntegrationTest` | `/` redirects to `/ui/` and the page is served; the live feed merges status, billing and click newest first and its cursor returns only newer events; window stats count states, duplicates, rejections, billed amount, clicks and per-minute buckets exactly |
 | `DlrSecurityIntegrationTest` | Authentication enforced end to end; refused callbacks are not stored |
 | `DlrBulkIntegrationTest` | 1 / 100 / 1,000 / 10,000 DLRs over HTTP, 48 at a time, mixed providers and statuses, progressions, duplicates and multipart billing DLRs. Every message's status, mobile, correlation id and billed units and amount are checked against the database |
 

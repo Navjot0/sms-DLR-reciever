@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DLR Receiver · Live</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2; --surface: #fcfcfb; --surface-2: #f0efec; --border: #e2e1dc;
+    --text: #0b0b0b; --text-2: #52514e; --text-3: #7a7974;
+    --accent: #2a78d6;
+    --s-status: #2a78d6; --s-billing: #eb6834; --s-click: #1baf7a;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --good-ink: #006300; --critical-ink: #b42323; --warning-ink: #7a5200;
+    --flash: #fff6d6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
+      --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
+      --accent: #3987e5;
+      --s-status: #3987e5; --s-billing: #d95926; --s-click: #199e70;
+      --good-ink: #5fd35f; --critical-ink: #ff8a8a; --warning-ink: #fab219;
+      --flash: #3a3420;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
+    --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
+    --accent: #3987e5;
+    --s-status: #3987e5; --s-billing: #d95926; --s-click: #199e70;
+    --good-ink: #5fd35f; --critical-ink: #ff8a8a; --warning-ink: #fab219;
+    --flash: #3a3420;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; gap: 12px; padding: 10px 20px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+          background: var(--surface-2); color: var(--text-2); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+  .dot.up { background: var(--good); } .dot.down { background: var(--critical); }
+  .dot.live { background: var(--good); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .spacer { flex: 1; }
+  button, select, input, textarea { font: inherit; color: var(--text); }
+  button { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  button:hover { border-color: var(--text-3); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  select, input[type=text], input[type=password], textarea {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+  main { padding: 16px 20px 40px; max-width: 1500px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .tile .label { color: var(--text-2); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .sub { color: var(--text-3); font-size: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-2); font-weight: normal; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  #chart { position: relative; height: 150px; }
+  #chart svg { width: 100%; height: 100%; display: block; }
+  .tooltip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
+             border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+             white-space: nowrap; display: none; z-index: 3; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; flex-wrap: wrap; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; color: var(--text-2); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .toolbar label { color: var(--text-2); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+  .table-wrap { overflow: auto; max-height: 62vh; border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { position: sticky; top: 0; background: var(--surface-2); text-align: left; font-weight: 600; color: var(--text-2);
+       padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr.new td { animation: flash 2.5s ease-out; }
+  @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--text-3); }
+  a.msg { color: var(--accent); cursor: pointer; text-decoration: none; }
+  a.msg:hover { text-decoration: underline; }
+  .kind { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+  .kind i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600;
+           border: 1px solid var(--border); white-space: nowrap; }
+  .b-good { color: var(--good-ink); border-color: var(--good); }
+  .b-bad { color: var(--critical-ink); border-color: var(--critical); }
+  .b-warn { color: var(--warning-ink); border-color: var(--warning); }
+  .b-neutral { color: var(--text-2); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+  dl.kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 10px; margin: 0; font-size: 13px; }
+  dl.kv dt { color: var(--text-2); } dl.kv dd { margin: 0; word-break: break-all; }
+  pre { background: var(--surface-2); padding: 8px; border-radius: 6px; overflow: auto; font-size: 12px; margin: 6px 0 0; max-height: 260px; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  .empty { padding: 24px; text-align: center; color: var(--text-3); }
+  .err { color: var(--critical-ink); }
+  textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 12px; }
+  .hidden { display: none !important; }
+  @media (max-width: 640px) { header, main { padding-left: 12px; padding-right: 12px; } dl.kv { grid-template-columns: 110px 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>DLR Receiver · Live</h1>
+  <span class="pill" id="healthPill"><span class="dot" id="healthDot"></span><span id="healthText">checking…</span></span>
+  <span class="pill"><span class="dot live" id="liveDot"></span><span id="liveText">Live</span></span>
+  <span class="spacer"></span>
+  <label class="pill">Window
+    <select id="windowSel" aria-label="Stats window">
+      <option value="15">15 min</option><option value="60" selected>1 hour</option>
+      <option value="360">6 hours</option><option value="1440">24 hours</option>
+    </select>
+  </label>
+  <label class="pill">Refresh
+    <select id="intervalSel" aria-label="Refresh interval">
+      <option value="2000" selected>2 s</option><option value="5000">5 s</option><option value="10000">10 s</option>
+    </select>
+  </label>
+  <button id="pauseBtn">Pause</button>
+  <button id="keyBtn" title="API key for X-API-Key (only needed when the query API is protected)">API key</button>
+  <button id="themeBtn" title="Toggle light/dark">◐</button>
+</header>
+
+<main>
+  <section class="tiles" id="tiles" aria-label="Totals for the selected window"></section>
+
+  <section class="card">
+    <h2>Callbacks per minute
+      <span class="legend">
+        <span><i style="background:var(--s-status)"></i>Status DLR</span>
+        <span><i style="background:var(--s-billing)"></i>Billing</span>
+        <span><i style="background:var(--s-click)"></i>Click</span>
+      </span>
+    </h2>
+    <div id="chart"><div class="tooltip" id="tip"></div></div>
+  </section>
+
+  <section class="card">
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="feed">Live feed</button>
+      <button class="tab" data-tab="lookup">Message lookup</button>
+      <button class="tab" data-tab="verify">Bulk verify</button>
+      <button class="tab" data-tab="rejected">Rejected</button>
+    </div>
+
+    <!-- Live feed -->
+    <div id="tab-feed">
+      <div class="toolbar">
+        <label><input type="checkbox" class="kindF" value="STATUS" checked> Status</label>
+        <label><input type="checkbox" class="kindF" value="BILLING" checked> Billing</label>
+        <label><input type="checkbox" class="kindF" value="CLICK" checked> Click</label>
+        <select id="procF" aria-label="Processing status">
+          <option value="">All processing</option><option>APPLIED</option><option>IGNORED</option>
+          <option>DUPLICATE</option><option>REJECTED</option>
+        </select>
+        <input type="text" id="searchF" placeholder="Filter by message id, mobile, status…" style="min-width:260px">
+        <span class="spacer"></span>
+        <span class="muted" id="feedCount"></span>
+        <button id="clearFeed">Clear</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Received</th><th>Type</th><th>Message ID</th><th>Part</th><th>Mobile</th>
+            <th>Status</th><th>Processing</th><th>Details</th><th>Source</th></tr></thead>
+          <tbody id="feedBody"></tbody>
+        </table>
+        <div class="empty" id="feedEmpty">Waiting for callbacks…</div>
+      </div>
+    </div>
+
+    <!-- Lookup -->
+    <div id="tab-lookup" class="hidden">
+      <div class="toolbar">
+        <input type="text" id="lookupId" placeholder="message_id (with or without :part)" style="min-width:360px">
+        <button class="primary" id="lookupBtn">Look up</button>
+        <label><input type="checkbox" id="lookupAuto"> Auto-refresh</label>
+      </div>
+      <div id="lookupOut" class="muted">Enter a message id, or click one in the live feed.</div>
+    </div>
+
+    <!-- Bulk verify -->
+    <div id="tab-verify" class="hidden">
+      <div class="grid2">
+        <div>
+          <textarea id="verifyIds" placeholder="One message_id per line (or comma separated)"></textarea>
+          <div class="toolbar" style="margin-top:8px">
+            <select id="verifyStatus" aria-label="Expected status">
+              <option value="">Any status (received only)</option><option>DELIVERED</option><option>SENT</option>
+              <option>FAILED</option><option>EXPIRED</option><option>REJECTED</option>
+            </select>
+            <label><input type="checkbox" id="verifyBilling"> Require billing</label>
+            <label><input type="checkbox" id="verifyClick"> Require click</label>
+            <button class="primary" id="verifyBtn">Verify</button>
+          </div>
+        </div>
+        <div id="verifySummary" class="muted">POST /api/v1/dlr/verify — results appear here.</div>
+      </div>
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th>Message ID</th><th>Received</th><th>Status</th><th>Provider status</th><th>Billed</th>
+          <th>Clicks</th><th>Matched</th></tr></thead>
+        <tbody id="verifyBody"></tbody></table></div>
+    </div>
+
+    <!-- Rejected -->
+    <div id="tab-rejected" class="hidden">
+      <div class="toolbar">
+        <button id="rejRefresh">Refresh</button>
+        <button id="rejReprocessAll">Reprocess all not yet reprocessed</button>
+        <span class="muted" id="rejMsg"></span>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Received</th><th>Type</th><th>Event</th><th>Message ID</th><th>Reason</th><th>Note</th><th>Raw payload</th><th></th></tr></thead>
+        <tbody id="rejBody"></tbody></table></div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  // ---------- helpers ----------
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => s == null ? "" : String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  const pad = (n) => String(n).padStart(2, "0");
+  function fmt(ts) {          // dd-mm-yyyy hh:mm:ss in the viewer's local time
+    if (!ts) return "";
+    const d = new Date(ts);
+    if (isNaN(d)) return esc(ts);
+    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  async function api(path, opts = {}) {
+    const headers = Object.assign({ "Accept": "application/json" }, opts.headers || {});
+    const key = store.get("dlr.apiKey", "");
+    if (key) headers["X-API-Key"] = key;
+    const res = await fetch(path, Object.assign({}, opts, { headers }));
+    const text = await res.text();
+    let body = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+    if (!res.ok) { const e = new Error((body && body.message) || res.statusText || ("HTTP " + res.status)); e.status = res.status; e.body = body; throw e; }
+    return body;
+  }
+  function statusBadge(s) {
+    if (!s) return "";
+    const cls = s === "DELIVERED" ? "b-good" : (s === "FAILED" || s === "EXPIRED" || s === "REJECTED") ? "b-bad"
+      : (s === "SENT" || s === "PENDING") ? "b-warn" : "b-neutral";
+    const icon = cls === "b-good" ? "✓ " : cls === "b-bad" ? "✕ " : cls === "b-warn" ? "… " : "";
+    return `<span class="badge ${cls}">${icon}${esc(s)}</span>`;
+  }
+  function procBadge(p) {
+    if (!p) return "";
+    const cls = p === "APPLIED" || p === "PARTIAL" ? "b-good" : p === "REJECTED" ? "b-bad" : "b-neutral";
+    return `<span class="badge ${cls}">${esc(p)}</span>`;
+  }
+  const KIND = { STATUS: ["Status", "var(--s-status)"], BILLING: ["Billing", "var(--s-billing)"], CLICK: ["Click", "var(--s-click)"] };
+  const kindTag = (k) => `<span class="kind"><i style="background:${KIND[k][1]}"></i>${KIND[k][0]}</span>`;
+
+  // ---------- theme ----------
+  const savedTheme = store.get("dlr.theme", "");
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  $("themeBtn").onclick = () => {
+    const cur = document.documentElement.dataset.theme
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next; store.set("dlr.theme", next); renderChart();
+  };
+  $("keyBtn").onclick = () => {
+    const v = prompt("X-API-Key for the DLR query APIs (leave empty to clear):", store.get("dlr.apiKey", ""));
+    if (v !== null) { store.set("dlr.apiKey", v.trim()); refreshAll(true); }
+  };
+
+  // ---------- tabs ----------
+  document.querySelectorAll(".tab").forEach(t => t.onclick = () => showTab(t.dataset.tab));
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+    ["feed", "lookup", "verify", "rejected"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
+    store.set("dlr.tab", name);
+    if (name === "rejected") loadRejected();
+  }
+
+  // ---------- health ----------
+  async function loadHealth() {
+    try {
+      const h = await fetch("/actuator/health", { headers: { Accept: "application/json" } }).then(r => r.json());
+      const db = h.components && h.components.db ? h.components.db.status : "?";
+      $("healthDot").className = "dot " + (h.status === "UP" ? "up" : "down");
+      $("healthText").textContent = `Service ${h.status} · DB ${db}`;
+    } catch {
+      $("healthDot").className = "dot down"; $("healthText").textContent = "Service unreachable";
+    }
+  }
+
+  // ---------- stats + tiles ----------
+  let stats = null;
+  async function loadStats() {
+    try { stats = await api(`/api/v1/dlr/live/stats?minutes=${$("windowSel").value}`); renderTiles(); renderChart(); }
+    catch (e) { $("tiles").innerHTML = `<div class="tile err">Stats unavailable: ${esc(e.message)}</div>`; }
+  }
+  function renderTiles() {
+    const s = stats, by = s.byNormalizedStatus || s.by_normalized_status || {}, proc = s.byProcessingStatus || s.by_processing_status || {};
+    const g = (o, k) => o[k] || 0;
+    const tiles = [
+      ["Status callbacks", s.statusCallbacks ?? s.status_callbacks, "all processing outcomes"],
+      ["Delivered", g(by, "DELIVERED"), "state changes"],
+      ["Sent (awaiting)", g(by, "SENT"), "state changes"],
+      ["Failed / expired", g(by, "FAILED") + g(by, "EXPIRED") + g(by, "REJECTED"), "state changes"],
+      ["Rejected callbacks", g(proc, "REJECTED"), "invalid / malformed"],
+      ["Duplicates", g(proc, "DUPLICATE"), `${g(proc, "IGNORED")} ignored`],
+      ["Billed", `${s.billedAmount ?? s.billed_amount ?? 0}${(s.billedCurrency || s.billed_currency) ? " " + (s.billedCurrency || s.billed_currency) : ""}`,
+        `${s.billingEvents ?? s.billing_events ?? 0} billing events`],
+      ["Clicks", s.clicks ?? 0, "short-link clicks"],
+    ];
+    $("tiles").innerHTML = tiles.map(([l, v, sub]) =>
+      `<div class="tile"><div class="label">${esc(l)}</div><div class="value">${esc(v)}</div><div class="sub">${esc(sub)}</div></div>`).join("");
+  }
+
+  // ---------- chart: stacked bars per minute ----------
+  function renderChart() {
+    const box = $("chart"), tip = $("tip");
+    box.querySelectorAll("svg").forEach(n => n.remove());
+    if (!stats) return;
+    const minutes = +stats.windowMinutes || +stats.window_minutes || 60;
+    const per = stats.perMinute || stats.per_minute || [];
+    const map = new Map(per.map(b => [new Date(b.minute).getTime(), b]));
+    const to = new Date(stats.to); to.setSeconds(0, 0);
+    const n = Math.min(minutes, 360);            // longer windows: show the last 6 hours of minutes
+    const step = minutes > 360 ? Math.ceil(minutes / 360) : 1;
+    const buckets = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const t0 = to.getTime() - i * step * 60000;
+      let s = 0, b = 0, c = 0;
+      for (let j = 0; j < step; j++) { const m = map.get(t0 - j * 60000); if (m) { s += m.status; b += m.billing; c += m.click; } }
+      buckets.push({ t: t0, s, b, c });
+    }
+    const W = box.clientWidth || 800, H = box.clientHeight || 150, padL = 34, padB = 18, padT = 6;
+    const max = Math.max(1, ...buckets.map(x => x.s + x.b + x.c));
+    const nice = Math.ceil(max / 4) * 4 || 4;
+    const bw = (W - padL) / buckets.length;
+    const y = v => padT + (H - padT - padB) * (1 - v / nice);
+    const css = getComputedStyle(document.documentElement);
+    const col = { s: css.getPropertyValue("--s-status"), b: css.getPropertyValue("--s-billing"), c: css.getPropertyValue("--s-click") };
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Callbacks per minute">`;
+    for (let i = 0; i <= 4; i++) {                // recessive grid
+      const v = nice * i / 4, yy = y(v);
+      svg += `<line x1="${padL}" x2="${W}" y1="${yy}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+      svg += `<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="var(--text-3)">${v}</text>`;
+    }
+    const gap = bw > 6 ? 2 : 0, w = Math.max(1, bw - gap);
+    buckets.forEach((x, i) => {
+      const x0 = padL + i * bw + gap / 2;
+      let base = 0;
+      [["s", x.s], ["b", x.b], ["c", x.c]].forEach(([k, v]) => {
+        if (!v) return;
+        const top = y(base + v), bot = y(base);
+        svg += `<rect x="${x0}" y="${top + (base ? 1 : 0)}" width="${w}" height="${Math.max(1, bot - top - (base ? 1 : 0))}" fill="${col[k]}" rx="${w > 6 ? 2 : 0}"/>`;
+        base += v;
+      });
+      svg += `<rect class="hit" data-i="${i}" x="${padL + i * bw}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"/>`;
+    });
+    const labelEvery = Math.max(1, Math.round(buckets.length / 6));
+    buckets.forEach((x, i) => {
+      if (i % labelEvery) return;
+      const d = new Date(x.t);
+      svg += `<text x="${padL + i * bw + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--text-3)">${pad(d.getHours())}:${pad(d.getMinutes())}</text>`;
+    });
+    svg += `</svg>`;
+    box.insertAdjacentHTML("afterbegin", svg);
+    box.querySelectorAll(".hit").forEach(r => {
+      r.onmousemove = (ev) => {
+        const x = buckets[+r.dataset.i], d = new Date(x.t);
+        tip.innerHTML = `<b>${pad(d.getHours())}:${pad(d.getMinutes())}${step > 1 ? ` (+${step - 1} min)` : ""}</b><br>`
+          + `<span class="kind"><i style="background:var(--s-status)"></i>Status ${x.s}</span><br>`
+          + `<span class="kind"><i style="background:var(--s-billing)"></i>Billing ${x.b}</span><br>`
+          + `<span class="kind"><i style="background:var(--s-click)"></i>Click ${x.c}</span>`;
+        const bx = box.getBoundingClientRect();
+        tip.style.display = "block";
+        let left = ev.clientX - bx.left + 12;
+        if (left + tip.offsetWidth > bx.width) left = ev.clientX - bx.left - tip.offsetWidth - 12;
+        tip.style.left = left + "px"; tip.style.top = "4px";
+      };
+      r.onmouseleave = () => { tip.style.display = "none"; };
+    });
+  }
+  window.addEventListener("resize", () => renderChart());
+
+  // ---------- live feed ----------
+  let cursor = null, feed = [], seen = new Set(), paused = false, timer = null;
+  const OVERLAP = 20;   // re-read a few ids back: transactions can commit slightly out of id order
+  async function loadFeed() {
+    let url = "/api/v1/dlr/live/feed?limit=200";
+    if (cursor) url += `&after_status=${Math.max(0, cursor.status - OVERLAP)}&after_billing=${Math.max(0, cursor.billing - OVERLAP)}&after_click=${Math.max(0, cursor.click - OVERLAP)}`;
+    try {
+      const r = await api(url);
+      const fresh = [];
+      for (const it of r.items) {
+        const key = it.kind + ":" + it.id;
+        if (seen.has(key)) continue;
+        seen.add(key); fresh.push(it);
+      }
+      const first = cursor === null;
+      cursor = r.cursor;
+      if (fresh.length) {
+        feed = fresh.concat(feed);
+        feed.sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id);
+        if (feed.length > 1000) { feed.length = 1000; }
+        renderFeed(first ? new Set() : new Set(fresh.map(f => f.kind + ":" + f.id)));
+      } else if (first) renderFeed(new Set());
+      $("liveText").textContent = paused ? "Paused" : "Live";
+    } catch (e) {
+      $("liveText").textContent = e.status === 401 ? "Needs API key" : "Feed error";
+      $("liveDot").className = "dot down";
+    }
+  }
+  function details(it) {
+    if (it.kind === "BILLING") return `${esc(it.transaction_type || "")} · ${esc(it.units ?? "")} unit(s) · ${esc(it.total_amount ?? "")} ${esc(it.currency || "")}`;
+    if (it.kind === "CLICK") return `link ${esc(it.url_key || "")} · visit #${esc(it.visited_count ?? "")} · ${esc(it.device_type || "")}`;
+    return it.note ? `<span class="muted">${esc(it.note)}</span>` : "";
+  }
+  function renderFeed(newKeys) {
+    const kinds = new Set([...document.querySelectorAll(".kindF:checked")].map(c => c.value));
+    const proc = $("procF").value, q = $("searchF").value.trim().toLowerCase();
+    const rows = feed.filter(it => kinds.has(it.kind) && (!proc || it.processing_status === proc)
+      && (!q || [it.message_id, it.provider_message_id, it.mobile, it.provider_status, it.normalized_status, it.note, it.url_key]
+            .some(v => v && String(v).toLowerCase().includes(q))));
+    $("feedBody").innerHTML = rows.slice(0, 500).map(it => {
+      const key = it.kind + ":" + it.id;
+      const mid = it.message_id ? `<a class="msg mono" data-id="${esc(it.message_id)}">${esc(it.message_id)}</a>` : `<span class="muted">—</span>`;
+      const status = it.kind === "STATUS"
+        ? `${statusBadge(it.normalized_status)} <span class="muted mono">${esc(it.provider_status || "")}</span>` : "";
+      return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono">${fmt(it.created_at)}</td><td>${kindTag(it.kind)}</td>`
+        + `<td>${mid}</td><td>${esc(it.part_number ?? "")}</td><td class="mono">${esc(it.mobile || "")}</td><td>${status}</td>`
+        + `<td>${procBadge(it.processing_status)}</td><td>${details(it)}</td><td class="muted">${esc(it.source || "")}</td></tr>`;
+    }).join("");
+    $("feedEmpty").classList.toggle("hidden", rows.length > 0);
+    $("feedCount").textContent = `${rows.length} shown · ${feed.length} loaded`;
+  }
+  document.querySelectorAll(".kindF").forEach(c => c.onchange = () => renderFeed(new Set()));
+  $("procF").onchange = () => renderFeed(new Set());
+  $("searchF").oninput = () => renderFeed(new Set());
+  $("clearFeed").onclick = () => { feed = []; renderFeed(new Set()); };
+  $("feedBody").onclick = (e) => { const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id); };
+
+  // ---------- lookup ----------
+  function openLookup(id) { $("lookupId").value = id; showTab("lookup"); doLookup(); }
+  $("lookupBtn").onclick = () => doLookup();
+  $("lookupId").onkeydown = (e) => { if (e.key === "Enter") doLookup(); };
+  async function doLookup() {
+    const id = $("lookupId").value.trim();
+    if (!id) return;
+    const enc = encodeURIComponent(id);
+    try {
+      const [st, bill, clk] = await Promise.all([
+        api(`/api/v1/dlr/${enc}?include_events=true`), api(`/api/v1/dlr/${enc}/billing`), api(`/api/v1/dlr/${enc}/clicks`)]);
+      $("lookupOut").className = "";
+      $("lookupOut").innerHTML = renderLookup(st, bill, clk);
+    } catch (e) { $("lookupOut").innerHTML = `<span class="err">Lookup failed: ${esc(e.message)}</span>`; }
+  }
+  function kv(pairs) {
+    return `<dl class="kv">${pairs.filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  }
+  function renderLookup(st, bill, clk) {
+    const b = bill.billing || {}, c = clk.clicks || {};
+    const parts = (st.parts || []).map(p => `${esc(p.part)}: ${statusBadge(p.status)} <span class="muted mono">${esc(p.provider_status || "")}</span>`).join("<br>");
+    const statusCard = `<div class="card"><h2>Delivery ${statusBadge(st.status)}</h2>${kv([
+      ["message_id", `<span class="mono">${esc(st.message_id)}</span>`], ["received", esc(st.received)],
+      ["provider_status", esc(st.provider_status)], ["status_code", esc(st.status_code)], ["source", esc(st.source)],
+      ["mobile", esc(st.mobile)], ["units", esc(st.units)], ["received_at", fmt(st.received_at)],
+      ["correlation_id", esc(st.correlation_id)], ["events / duplicates", st.received ? `${esc(st.event_count)} / ${esc(st.duplicate_count)}` : ""],
+      ["parts", parts], ["rejected callbacks", st.rejected_events ? `${esc(st.rejected_events)} — ${esc(st.last_rejection_reason)}` : ""]])}</div>`;
+    const billingCard = `<div class="card"><h2>Billing ${b.billed ? '<span class="badge b-good">✓ billed</span>' : '<span class="badge b-warn">… not billed</span>'}</h2>${kv([
+      ["events", esc(b.events)], ["parts", esc(b.parts)], ["units (net)", esc(b.units)],
+      ["amount (net)", b.total_amount != null ? `${esc(b.total_amount)} ${esc(b.currency || "")}` : ""],
+      ["debit / credit", b.debit_amount != null ? `${esc(b.debit_amount)} / ${esc(b.credit_amount)}` : ""]])}</div>`;
+    const clickCard = `<div class="card"><h2>Clicks ${c.clicked ? '<span class="badge b-good">✓ clicked</span>' : '<span class="badge b-neutral">not clicked</span>'}</h2>${kv([
+      ["clicks", esc(c.clicks)], ["visited_count", esc(c.visited_count)], ["unique IPs", esc(c.unique_ips)],
+      ["links", esc((c.url_keys || []).join(", "))], ["first / last", c.first_clicked_at ? `${fmt(c.first_clicked_at)} / ${fmt(c.last_clicked_at)}` : ""],
+      ["last destination", esc(c.last_destination_url)], ["last device", esc(c.last_device_type)]])}</div>`;
+    const timeline = [];
+    (st.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "STATUS", what: `${statusBadge(e.normalized_status)} <span class="mono muted">${esc(e.provider_status || "")}</span>`, proc: e.processing_status, note: e.rejection_reason || e.processing_note, raw: e.raw_payload, part: e.part_number }));
+    (bill.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "BILLING", what: `${esc(e.transaction_type || "")} ${esc(e.units ?? "")} unit(s) ${esc(e.total_amount ?? "")} ${esc(e.currency || "")}`, proc: e.processing_status, note: e.rejection_reason || e.processing_note, raw: e.raw_event, part: e.part_number }));
+    (clk.events || []).forEach(e => timeline.push({ t: e.created_at, kind: "CLICK", what: `link ${esc(e.url_key || "")} · visit #${esc(e.visited_count ?? "")} · ${esc(e.device_type || "")} ${esc(e.browser || "")}`, proc: e.processing_status, note: e.processing_note, raw: e.raw_payload, part: e.part_number }));
+    timeline.sort((a, b) => new Date(a.t) - new Date(b.t));
+    const tl = timeline.length ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Part</th><th>Event</th><th>Processing</th><th>Note</th><th>Raw</th></tr></thead><tbody>${
+      timeline.map(x => `<tr><td class="mono">${fmt(x.t)}</td><td>${kindTag(x.kind)}</td><td>${esc(x.part ?? "")}</td><td>${x.what}</td><td>${procBadge(x.proc)}</td><td class="muted">${esc(x.note || "")}</td>`
+        + `<td><details><summary>JSON</summary><pre>${esc(JSON.stringify(x.raw, null, 2))}</pre></details></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">No callbacks stored for this message yet.</div>`;
+    return `<div class="grid2">${statusCard}${billingCard}${clickCard}</div><div class="card"><h2>All callbacks</h2>${tl}</div>`;
+  }
+
+  // ---------- bulk verify ----------
+  $("verifyBtn").onclick = async () => {
+    const ids = $("verifyIds").value.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+    if (!ids.length) { $("verifySummary").innerHTML = `<span class="err">Enter at least one message_id.</span>`; return; }
+    const body = { message_ids: ids };
+    if ($("verifyStatus").value) body.expected_status = $("verifyStatus").value;
+    if ($("verifyBilling").checked) body.require_billing = true;
+    if ($("verifyClick").checked) body.require_click = true;
+    try {
+      const r = await api("/api/v1/dlr/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const pass = r.all_matched != null ? r.all_matched : r.missing === 0;
+      $("verifySummary").innerHTML = `<div class="card"><h2>Result ${pass ? '<span class="badge b-good">✓ PASS</span>' : '<span class="badge b-bad">✕ FAIL</span>'}</h2>${kv([
+        ["total", esc(r.total)], ["received", esc(r.received)], ["missing", esc(r.missing)],
+        ["delivered / failed", `${esc(r.delivered)} / ${esc(r.failed)}`], ["sent / expired / rejected", `${esc(r.sent)} / ${esc(r.expired)} / ${esc(r.rejected)}`],
+        ["billed / missing", `${esc(r.billed)} / ${esc(r.billing_missing)}`], ["clicked / missing", `${esc(r.clicked)} / ${esc(r.click_missing)}`],
+        ["matched", r.matched != null ? `${esc(r.matched)} of ${esc(r.total)}` : ""]])}</div>`;
+      $("verifyBody").innerHTML = r.results.map(x => `<tr><td><a class="msg mono" data-id="${esc(x.message_id)}">${esc(x.message_id)}</a></td>`
+        + `<td>${x.received ? '<span class="badge b-good">✓ yes</span>' : '<span class="badge b-bad">✕ missing</span>'}</td><td>${statusBadge(x.status)}</td>`
+        + `<td class="mono muted">${esc(x.provider_status || "")}</td><td>${x.billed ? `${esc(x.billed_units)} · ${esc(x.billed_amount)} ${esc(x.currency || "")}` : '<span class="muted">—</span>'}</td>`
+        + `<td>${x.clicked ? esc(x.click_count) : '<span class="muted">—</span>'}</td>`
+        + `<td>${x.matched == null ? "" : x.matched ? '<span class="badge b-good">✓</span>' : '<span class="badge b-bad">✕</span>'}</td></tr>`).join("");
+    } catch (e) { $("verifySummary").innerHTML = `<span class="err">Verify failed: ${esc(e.message)}</span>`; }
+  };
+  $("verifyBody").onclick = (e) => { const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id); };
+
+  // ---------- rejected ----------
+  async function loadRejected() {
+    try {
+      const [cb, be] = await Promise.all([api("/api/v1/dlr/events/rejected?limit=200"), api("/api/v1/dlr/events/billing/rejected?limit=200")]);
+      const rows = cb.map(e => ({ t: e.created_at, kind: "STATUS", id: e.id, mid: e.message_id, reason: e.rejection_reason, note: e.processing_note, raw: e.raw_payload, canReprocess: !(e.processing_note || "").startsWith("reprocess") }))
+        .concat(be.map(e => ({ t: e.created_at, kind: "BILLING", id: e.id, mid: e.message_id, reason: e.rejection_reason, note: e.processing_note, raw: e.raw_event, canReprocess: false })))
+        .sort((a, b) => new Date(b.t) - new Date(a.t));
+      $("rejBody").innerHTML = rows.length ? rows.map(r => `<tr><td class="mono">${fmt(r.t)}</td><td>${kindTag(r.kind)}</td><td class="mono">${esc(r.id)}</td>`
+        + `<td>${r.mid ? `<a class="msg mono" data-id="${esc(r.mid)}">${esc(r.mid)}</a>` : '<span class="muted">—</span>'}</td>`
+        + `<td class="err">${esc(r.reason || "")}</td><td class="muted">${esc(r.note || "")}</td>`
+        + `<td><details><summary>JSON</summary><pre>${esc(JSON.stringify(r.raw, null, 2))}</pre></details></td>`
+        + `<td>${r.canReprocess ? `<button data-reprocess="${esc(r.id)}">Reprocess</button>` : ""}</td></tr>`).join("")
+        : `<tr><td colspan="8" class="empty">No rejected callbacks.</td></tr>`;
+    } catch (e) { $("rejBody").innerHTML = `<tr><td colspan="8" class="err">${esc(e.message)}</td></tr>`; }
+  }
+  $("rejRefresh").onclick = loadRejected;
+  $("rejBody").onclick = async (e) => {
+    const a = e.target.closest("a.msg"); if (a) return openLookup(a.dataset.id);
+    const b = e.target.closest("button[data-reprocess]"); if (!b) return;
+    b.disabled = true;
+    try { const r = await api(`/api/v1/dlr/events/${b.dataset.reprocess}/reprocess`, { method: "POST" });
+      $("rejMsg").textContent = `Event ${b.dataset.reprocess} → ${r.processing_status}${r.rejection_reason ? " (" + r.rejection_reason + ")" : ""}`; }
+    catch (err) { $("rejMsg").textContent = `Reprocess failed: ${err.message}`; }
+    loadRejected();
+  };
+  $("rejReprocessAll").onclick = async () => {
+    if (!confirm("Reprocess every rejected callback that has not been reprocessed yet?")) return;
+    try { const r = await api("/api/v1/dlr/events/rejected/reprocess?limit=500", { method: "POST" });
+      $("rejMsg").textContent = `Attempted ${r.attempted}: ${r.applied} applied, ${r.duplicate} duplicate, ${r.ignored} ignored, ${r.still_rejected} still rejected, ${r.skipped} skipped`; }
+    catch (err) { $("rejMsg").textContent = `Reprocess failed: ${err.message}`; }
+    loadRejected();
+  };
+
+  // ---------- loop ----------
+  async function refreshAll(resetFeed) {
+    if (resetFeed) { cursor = null; feed = []; seen = new Set(); }
+    $("liveDot").className = paused ? "dot" : "dot live";
+    await Promise.all([loadHealth(), loadStats(), loadFeed()]);
+    if ($("lookupAuto").checked && !$("tab-lookup").classList.contains("hidden")) doLookup();
+  }
+  function schedule() {
+    clearInterval(timer);
+    if (!paused) timer = setInterval(() => refreshAll(false), +$("intervalSel").value);
+  }
+  $("pauseBtn").onclick = () => {
+    paused = !paused;
+    $("pauseBtn").textContent = paused ? "Resume" : "Pause";
+    $("liveDot").className = paused ? "dot" : "dot live";
+    $("liveText").textContent = paused ? "Paused" : "Live";
+    schedule(); if (!paused) refreshAll(false);
+  };
+  $("intervalSel").value = store.get("dlr.interval", "2000");
+  $("intervalSel").onchange = () => { store.set("dlr.interval", $("intervalSel").value); schedule(); };
+  $("windowSel").value = store.get("dlr.window", "60");
+  $("windowSel").onchange = () => { store.set("dlr.window", $("windowSel").value); loadStats(); };
+
+  const params = new URLSearchParams(location.search);
+  showTab(params.get("message_id") ? "lookup" : store.get("dlr.tab", "feed"));
+  if (params.get("message_id")) { $("lookupId").value = params.get("message_id"); doLookup(); }
+  refreshAll(true); schedule();
+})();
+</script>
+</body>
+</html>
