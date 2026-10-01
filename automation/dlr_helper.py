@@ -233,6 +233,24 @@ def send_webengage_dlr(message_id: str, status: str = "sms_sent", to_number: str
     return SimulatedDlr(message_id, response.status_code)
 
 
+def send_meta_dlr(wamid: str, status: str = "delivered", recipient_id: str = "919000000001",
+                  timestamp: int | None = None, error_code: int | None = None, error_title: str | None = None,
+                  callback_data: str | None = None, base_url: str = DLR_BASE_URL,
+                  headers: dict | None = None) -> SimulatedDlr:
+    """Simulates a Meta (WhatsApp Cloud API) status webhook: sent / delivered / read / failed for one wamid."""
+    st = {"id": wamid, "status": status, "timestamp": str(timestamp or int(time.time())), "recipient_id": recipient_id,
+          "pricing": {"billable": True, "pricing_model": "CBP", "category": "utility"}}
+    if callback_data:
+        st["biz_opaque_callback_data"] = callback_data
+    if error_code is not None:
+        st["errors"] = [{"code": error_code, "title": error_title or "error", "message": error_title or "error"}]
+    payload = {"object": "whatsapp_business_account", "entry": [{"id": "WABA", "changes": [{"field": "messages", "value": {
+        "messaging_product": "whatsapp", "metadata": {"display_phone_number": "15550000000", "phone_number_id": "PN"},
+        "statuses": [st]}}]}]}
+    response = _session.post(f"{base_url}/api/v1/dlr/receive", json=payload, headers=headers or {}, timeout=10)
+    return SimulatedDlr(wamid, response.status_code)
+
+
 def send_billing_dlr(message_id: str, parts: int = 1, amount_per_part: str = "1", currency: str = "INR",
                      transaction_type: str = "debit", product: str = "SMS Transactional",
                      base_url: str = DLR_BASE_URL, headers: dict | None = None) -> SimulatedDlr:

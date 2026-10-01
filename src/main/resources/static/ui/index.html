@@ -11,7 +11,7 @@
     --text: #0b0b0b; --text-2: #52514e; --text-3: #7a7974;
     --accent: #2a78d6;
     --s-status: #2a78d6; --s-billing: #eb6834; --s-click: #1baf7a;
-    --c-sms: #2a78d6; --c-we: #eb6834; --c-url: #1baf7a;
+    --c-sms: #2a78d6; --c-we: #eb6834; --c-url: #1baf7a; --c-meta: #eda100;
     --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
     --good-ink: #006300; --critical-ink: #b42323; --warning-ink: #7a5200;
     --flash: #fff6d6;
@@ -24,7 +24,7 @@
       --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
       --accent: #3987e5;
       --s-status: #3987e5; --s-billing: #d95926; --s-click: #199e70;
-      --c-sms: #3987e5; --c-we: #d95926; --c-url: #199e70;
+      --c-sms: #3987e5; --c-we: #d95926; --c-url: #199e70; --c-meta: #c98500;
       --good-ink: #5fd35f; --critical-ink: #ff8a8a; --warning-ink: #fab219;
       --flash: #3a3420;
     }
@@ -35,7 +35,7 @@
     --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
     --accent: #3987e5;
     --s-status: #3987e5; --s-billing: #d95926; --s-click: #199e70;
-    --c-sms: #3987e5; --c-we: #d95926; --c-url: #199e70;
+    --c-sms: #3987e5; --c-we: #d95926; --c-url: #199e70; --c-meta: #c98500;
     --good-ink: #5fd35f; --critical-ink: #ff8a8a; --warning-ink: #fab219;
     --flash: #3a3420;
   }
@@ -106,6 +106,8 @@
   .err { color: var(--critical-ink); }
   textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 12px; }
   .hidden { display: none !important; }
+  #feedBody td:nth-child(-n+3) { white-space: nowrap; }
+  details.raw pre { max-width: 520px; white-space: pre-wrap; word-break: break-all; }
   .tiles .tile .value.good { color: var(--good-ink); } .tiles .tile .value.bad { color: var(--critical-ink); }
   .tiles .tile .value.warn { color: var(--warning-ink); }
   .cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-bottom: 14px; }
@@ -156,6 +158,7 @@
         <span><i style="background:var(--c-sms)"></i>Default SMS</span>
         <span><i style="background:var(--c-we)"></i>WebEngage</span>
         <span><i style="background:var(--c-url)"></i>Short URL clicks</span>
+        <span><i style="background:var(--c-meta)"></i>Meta WhatsApp</span>
       </span>
     </h2>
     <div id="chart"><div class="tooltip" id="tip"></div></div>
@@ -174,10 +177,11 @@
         <label><input type="checkbox" class="catF" value="DEFAULT_SMS" checked> Default SMS</label>
         <label><input type="checkbox" class="catF" value="WEBENGAGE" checked> WebEngage</label>
         <label><input type="checkbox" class="catF" value="SHORT_URL" checked> Short URL</label>
+        <label><input type="checkbox" class="catF" value="META" checked> Meta WhatsApp</label>
         <label><input type="checkbox" id="billingF" checked> Billing</label>
         <select id="statusF" aria-label="Status">
           <option value="">All statuses</option><option>DELIVERED</option><option>FAILED</option>
-          <option>REJECTED</option><option>SENT</option>
+          <option>READ</option><option>REJECTED</option><option>SENT</option>
         </select>
         <input type="text" id="searchF" placeholder="Filter by message id, mobile, status…" style="min-width:260px">
         <span class="spacer"></span>
@@ -187,7 +191,7 @@
       <div class="table-wrap">
         <table>
           <thead><tr><th>Received</th><th>Category</th><th>Type</th><th>Message ID</th><th>Mobile</th>
-            <th>Status</th><th>Details</th></tr></thead>
+            <th>Status</th><th>Details</th><th>Raw</th></tr></thead>
           <tbody id="feedBody"></tbody>
         </table>
         <div class="empty" id="feedEmpty">Waiting for callbacks…</div>
@@ -211,7 +215,7 @@
           <textarea id="verifyIds" placeholder="One message_id per line (or comma separated)"></textarea>
           <div class="toolbar" style="margin-top:8px">
             <select id="verifyStatus" aria-label="Expected status">
-              <option value="">Any status (received only)</option><option>DELIVERED</option><option>SENT</option>
+              <option value="">Any status (received only)</option><option>DELIVERED</option><option>READ</option><option>SENT</option>
               <option>FAILED</option><option>EXPIRED</option><option>REJECTED</option>
             </select>
             <label><input type="checkbox" id="verifyBilling"> Require billing</label>
@@ -258,12 +262,12 @@
   }
   function statusBadge(s) {
     if (!s) return "";
-    const cls = s === "DELIVERED" ? "b-good" : (s === "FAILED" || s === "EXPIRED" || s === "REJECTED") ? "b-bad"
+    const cls = s === "DELIVERED" || s === "READ" ? "b-good" : (s === "FAILED" || s === "EXPIRED" || s === "REJECTED") ? "b-bad"
       : (s === "SENT" || s === "PENDING") ? "b-warn" : "b-neutral";
     const icon = cls === "b-good" ? "✓ " : cls === "b-bad" ? "✕ " : cls === "b-warn" ? "… " : "";
     return `<span class="badge ${cls}">${icon}${esc(s)}</span>`;
   }
-  const CAT = { DEFAULT_SMS: ["Default SMS", "var(--c-sms)"], WEBENGAGE: ["WebEngage", "var(--c-we)"], SHORT_URL: ["Short URL", "var(--c-url)"] };
+  const CAT = { DEFAULT_SMS: ["Default SMS", "var(--c-sms)"], WEBENGAGE: ["WebEngage", "var(--c-we)"], SHORT_URL: ["Short URL", "var(--c-url)"], META: ["Meta WhatsApp", "var(--c-meta)"] };
   const catOf = (it) => it.kind === "CLICK" ? "SHORT_URL" : (it.source || "");
   const catTag = (k) => CAT[k] ? `<span class="kind"><i style="background:${CAT[k][1]}"></i>${CAT[k][0]}</span>` : esc(k);
   const KIND = { STATUS: "Status DLR", BILLING: "Billing", CLICK: "Click" };
@@ -316,6 +320,7 @@
     const tiles = [
       ["Total DLRs", n0(t.dlrs), "", "status DLRs received"],
       ["Delivered", n0(t.delivered), "good", pct(t.delivered, t.dlrs)],
+      ["Read", n0(t.read), "good", "WhatsApp read receipts"],
       ["Failed", n0(t.failed), "bad", pct(t.failed, t.dlrs) + " · incl. expired"],
       ["Rejected", n0(t.rejected), "bad", pct(t.rejected, t.dlrs)],
       ["Billing", n0(t.billing_events), "", money(t.billed_amount, t.billed_currency)
@@ -340,15 +345,17 @@
     }
     const total = c.dlrs || 0;
     const seg = (v, col) => v ? `<span style="width:${100 * v / total}%;background:${col}" title=""></span>` : "";
+    const meta = c.key === "META";
     return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">${n0(total)} DLRs</span></h3><div class="nums">`
       + num("Delivered", n0(c.delivered), pct(c.delivered, total), "var(--good)")
+      + (meta ? num("Read", n0(c.read), pct(c.read, total), "var(--good-ink)") : "")
       + num("Failed", n0(c.failed), pct(c.failed, total), "var(--critical)")
       + num("Rejected", n0(c.rejected), pct(c.rejected, total), "var(--serious)")
       + num("Sent / pending", n0(c.pending), pct(c.pending, total), "var(--warning)")
-      + num("Billing", n0(c.billing_events), money(c.billed_amount, c.billed_currency))
+      + (meta ? "" : num("Billing", n0(c.billing_events), money(c.billed_amount, c.billed_currency)))
       + num("Total DLRs", n0(total))
-      + `</div>${total ? `<div class="meter" role="img" aria-label="Delivered ${c.delivered}, failed ${c.failed}, rejected ${c.rejected}, pending ${c.pending}">`
-      + seg(c.delivered, "var(--good)") + seg(c.failed, "var(--critical)") + seg(c.rejected, "var(--serious)") + seg(c.pending, "var(--warning)")
+      + `</div>${total ? `<div class="meter" role="img" aria-label="Delivered ${c.delivered}, read ${c.read || 0}, failed ${c.failed}, rejected ${c.rejected}, pending ${c.pending}">`
+      + seg(c.delivered, "var(--good)") + seg(c.read, "var(--good-ink)") + seg(c.failed, "var(--critical)") + seg(c.rejected, "var(--serious)") + seg(c.pending, "var(--warning)")
       + `</div>` : ""}</div>`;
   }
 
@@ -368,17 +375,17 @@
     const buckets = [];
     for (let i = Math.ceil(total / step) - 1; i >= 0; i--) {
       const t0 = to.getTime() - i * step * bucketMin * 60000;
-      let s = 0, b = 0, c = 0;
-      for (let j = 0; j < step; j++) { const m = map.get(t0 - j * bucketMin * 60000); if (m) { s += m.default_sms; b += m.webengage; c += m.short_url; } }
-      buckets.push({ t: t0, s, b, c });
+      let s = 0, b = 0, c = 0, w = 0;
+      for (let j = 0; j < step; j++) { const m = map.get(t0 - j * bucketMin * 60000); if (m) { s += m.default_sms; b += m.webengage; c += m.short_url; w += m.meta || 0; } }
+      buckets.push({ t: t0, s, b, c, w });
     }
     const W = box.clientWidth || 800, H = box.clientHeight || 150, padL = 34, padB = 18, padT = 6;
-    const max = Math.max(1, ...buckets.map(x => x.s + x.b + x.c));
+    const max = Math.max(1, ...buckets.map(x => x.s + x.b + x.c + x.w));
     const nice = Math.ceil(max / 4) * 4 || 4;
     const bw = (W - padL) / buckets.length;
     const y = v => padT + (H - padT - padB) * (1 - v / nice);
     const css = getComputedStyle(document.documentElement);
-    const col = { s: css.getPropertyValue("--c-sms"), b: css.getPropertyValue("--c-we"), c: css.getPropertyValue("--c-url") };
+    const col = { s: css.getPropertyValue("--c-sms"), b: css.getPropertyValue("--c-we"), c: css.getPropertyValue("--c-url"), w: css.getPropertyValue("--c-meta") };
     let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="DLRs over time by category">`;
     for (let i = 0; i <= 4; i++) {                // recessive grid
       const v = nice * i / 4, yy = y(v);
@@ -389,7 +396,7 @@
     buckets.forEach((x, i) => {
       const x0 = padL + i * bw + gap / 2;
       let base = 0;
-      [["s", x.s], ["b", x.b], ["c", x.c]].forEach(([k, v]) => {
+      [["s", x.s], ["b", x.b], ["c", x.c], ["w", x.w]].forEach(([k, v]) => {
         if (!v) return;
         const top = y(base + v), bot = y(base);
         svg += `<rect x="${x0}" y="${top + (base ? 1 : 0)}" width="${w}" height="${Math.max(1, bot - top - (base ? 1 : 0))}" fill="${col[k]}" rx="${w > 6 ? 2 : 0}"/>`;
@@ -413,7 +420,8 @@
         tip.innerHTML = `<b>${fmt(x.t)}${span > 1 ? ` (+${span} min)` : ""}</b><br>`
           + `<span class="kind"><i style="background:var(--c-sms)"></i>Default SMS ${x.s}</span><br>`
           + `<span class="kind"><i style="background:var(--c-we)"></i>WebEngage ${x.b}</span><br>`
-          + `<span class="kind"><i style="background:var(--c-url)"></i>Short URL clicks ${x.c}</span>`;
+          + `<span class="kind"><i style="background:var(--c-url)"></i>Short URL clicks ${x.c}</span><br>`
+          + `<span class="kind"><i style="background:var(--c-meta)"></i>Meta WhatsApp ${x.w}</span>`;
         const bx = box.getBoundingClientRect();
         tip.style.display = "block";
         let left = ev.clientX - bx.left + 12;
@@ -458,6 +466,23 @@
     if (it.kind === "CLICK") return `link ${esc(it.url_key || "")} · visit #${esc(it.visited_count ?? "")} · ${esc(it.device_type || "")}`;
     return "";
   }
+  // Raw JSON: rendered only while expanded; the expanded rows stay open across refreshes
+  const openRaw = new Set();
+  function rawCell(it, key) {
+    if (it.raw == null) return "";
+    const open = openRaw.has(key);
+    return `<details class="raw" data-key="${esc(key)}"${open ? " open" : ""}><summary>JSON</summary>`
+      + `<pre>${open ? esc(JSON.stringify(it.raw, null, 2)) : ""}</pre></details>`;
+  }
+  $("feedBody").addEventListener("toggle", (e) => {
+    const d = e.target; if (!d.matches || !d.matches("details.raw")) return;
+    const key = d.dataset.key;
+    if (d.open) {
+      openRaw.add(key);
+      const it = feed.find(f => f.kind + ":" + f.id === key);
+      d.querySelector("pre").textContent = it ? JSON.stringify(it.raw, null, 2) : "";
+    } else openRaw.delete(key);
+  }, true);
   function renderFeed(newKeys) {
     const cats = new Set([...document.querySelectorAll(".catF:checked")].map(c => c.value));
     const showBilling = $("billingF").checked, st = $("statusF").value, q = $("searchF").value.trim().toLowerCase();
@@ -473,7 +498,7 @@
         ? `${statusBadge(it.normalized_status)} <span class="muted mono">${esc(it.provider_status || "")}</span>` : "";
       return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono">${fmt(it.created_at)}</td><td>${catTag(catOf(it))}</td><td>${kindTag(it.kind)}</td>`
         + `<td>${mid}</td><td class="mono">${esc(it.mobile || "")}</td><td>${status}</td>`
-        + `<td>${details(it)}</td></tr>`;
+        + `<td>${details(it)}</td><td>${rawCell(it, key)}</td></tr>`;
     }).join("");
     $("feedEmpty").classList.toggle("hidden", rows.length > 0);
     $("feedCount").textContent = `${rows.length} shown · ${feed.length} loaded`;

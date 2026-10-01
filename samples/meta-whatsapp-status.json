@@ -1,0 +1,42 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": { "display_phone_number": "15550783881", "phone_number_id": "106540352242922" },
+            "statuses": [
+              {
+                "id": "wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJBNjQ1RkU2MTk3RjE3Q0UwNTEA",
+                "status": "delivered",
+                "timestamp": "1727780000",
+                "recipient_id": "919000000001",
+                "biz_opaque_callback_data": "campaign-123",
+                "conversation": { "id": "6ceb9d929c5b1bbd38b54c04f4a9e2fd", "origin": { "type": "utility" } },
+                "pricing": { "billable": true, "pricing_model": "CBP", "category": "utility" }
+              },
+              {
+                "id": "wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJBNjQ1RkU2MTk3RjE3Q0UwNTIA",
+                "status": "failed",
+                "timestamp": "1727780003",
+                "recipient_id": "919000000002",
+                "errors": [
+                  {
+                    "code": 131026,
+                    "title": "Message undeliverable",
+                    "message": "Message undeliverable",
+                    "error_data": { "details": "Receiver is incapable of receiving this message" }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

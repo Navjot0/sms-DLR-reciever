@@ -28,6 +28,10 @@ final class AdapterTestSupport {
         return new WebEngageDlrAdapter(MAPPER, VALIDATOR, NORMALIZER, PROPS);
     }
 
+    static com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter metaAdapter() {
+        return new com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter(NORMALIZER, MAPPER, PROPS);
+    }
+
     static JsonNode json(String s) {
         try {
             return MAPPER.readTree(s);

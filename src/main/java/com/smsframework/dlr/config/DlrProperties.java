@@ -49,6 +49,7 @@ public class DlrProperties {
     private final Billing billing = new Billing();
 
     private final Clicks clicks = new Clicks();
+    private final Meta meta = new Meta();
 
     // ------------------------------------------------------------------
 
@@ -58,17 +59,20 @@ public class DlrProperties {
         m.put("FAILED", new ArrayList<>(List.of("UNDELIV", "FAILED", "SMS_FAILED")));
         m.put("EXPIRED", new ArrayList<>(List.of("EXPIRED", "SMS_EXPIRED")));
         m.put("REJECTED", new ArrayList<>(List.of("REJECTD", "REJECTED")));
-        m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED")));
+        m.put("READ", new ArrayList<>(List.of("READ")));
+        m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED", "SENT")));
         return m;
     }
 
     public static Map<String, List<String>> defaultTransitions() {
         Map<String, List<String>> t = new LinkedHashMap<>();
         // UNKNOWN is a weak state: anything known may replace it.
-        t.put("UNKNOWN", new ArrayList<>(List.of("SENT", "DELIVERED", "FAILED", "EXPIRED", "REJECTED")));
-        t.put("SENT", new ArrayList<>(List.of("DELIVERED", "FAILED", "EXPIRED", "REJECTED")));
+        t.put("UNKNOWN", new ArrayList<>(List.of("SENT", "DELIVERED", "READ", "FAILED", "EXPIRED", "REJECTED")));
+        t.put("SENT", new ArrayList<>(List.of("DELIVERED", "READ", "FAILED", "EXPIRED", "REJECTED")));
+        // WhatsApp: a read receipt follows delivery.
+        t.put("DELIVERED", new ArrayList<>(List.of("READ")));
         // Final states: no transitions by default (no downgrade, no flip-flop).
-        t.put("DELIVERED", new ArrayList<>());
+        t.put("READ", new ArrayList<>());
         t.put("FAILED", new ArrayList<>());
         t.put("EXPIRED", new ArrayList<>());
         t.put("REJECTED", new ArrayList<>());
@@ -89,7 +93,10 @@ public class DlrProperties {
                 "DEFAULT", "DEFAULT_SMS",
                 "SMS", "DEFAULT_SMS",
                 "WE", "WEBENGAGE",
-                "WEB_ENGAGE", "WEBENGAGE"));
+                "WEB_ENGAGE", "WEBENGAGE",
+                "WHATSAPP", "META",
+                "WA", "META",
+                "META_WHATSAPP", "META"));
 
         public List<String> getHeaders() { return headers; }
         public void setHeaders(List<String> headers) { this.headers = headers; }
@@ -319,4 +326,14 @@ public class DlrProperties {
     public Security getSecurity() { return security; }
     public Billing getBilling() { return billing; }
     public Clicks getClicks() { return clicks; }
+    public Meta getMeta() { return meta; }
+
+    /** Meta (WhatsApp Cloud API) webhooks. */
+    public static class Meta {
+        /** Token Meta sends as hub.verify_token when the callback URL is saved (GET /api/v1/dlr/receive). */
+        private String verifyToken = "";
+
+        public String getVerifyToken() { return verifyToken; }
+        public void setVerifyToken(String verifyToken) { this.verifyToken = verifyToken; }
+    }
 }

@@ -28,10 +28,10 @@ import java.util.Map;
 @Repository
 public class LiveMessageRepository {
 
-    private static final String FINAL = "normalized_status IN ('DELIVERED', 'FAILED', 'EXPIRED', 'REJECTED')";
-    /** Same rule as the state machine: the first final status wins; without one, the latest status. */
+    private static final String FINAL = "normalized_status IN ('DELIVERED', 'READ', 'FAILED', 'EXPIRED', 'REJECTED')";
+    /** Same rule as the state machine: READ wins, then the first final status; without one, the latest status. */
     private static final String STATUS_ORDER =
-            "(" + FINAL + ") DESC, CASE WHEN " + FINAL + " THEN id ELSE -id END";
+            "(normalized_status = 'READ') DESC, (" + FINAL + ") DESC, CASE WHEN " + FINAL + " THEN id ELSE -id END";
     private static final String ACCEPTED = "processing_status IN ('APPLIED', 'IGNORED')";
     private static final int TIMELINE_LIMIT = 300;
 

@@ -28,5 +28,7 @@ public record LiveFeedItem(
         // click
         String urlKey,
         Integer visitedCount,
-        String deviceType) {
+        String deviceType,
+        // the callback as received (status/click: whole payload; billing: this event)
+        @com.fasterxml.jackson.annotation.JsonRawValue String raw) {
 }

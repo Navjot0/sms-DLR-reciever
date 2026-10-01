@@ -51,7 +51,9 @@ class DlrStateMachineTest {
 
     @Test
     void finalStatesAreFinal() {
-        assertThat(sm.isFinal(DELIVERED)).isTrue();
+        // DELIVERED only allows the WhatsApp read receipt; READ itself is final
+        assertThat(sm.allowedFrom(DELIVERED)).containsExactly(com.smsframework.dlr.domain.NormalizedStatus.READ);
+        assertThat(sm.isFinal(com.smsframework.dlr.domain.NormalizedStatus.READ)).isTrue();
         assertThat(sm.isFinal(FAILED)).isTrue();
         assertThat(sm.isFinal(SENT)).isFalse();
     }

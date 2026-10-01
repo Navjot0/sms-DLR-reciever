@@ -22,6 +22,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [Validation and rejected DLRs](#validation-and-rejected-dlrs)
 - [Billing DLRs](#billing-dlrs)
 - [Short-link click events](#short-link-click-events)
+- [Meta WhatsApp DLRs](#meta-whatsapp-dlrs)
 - [Database](#database)
 - [Security](#security)
 - [Logging](#logging)
@@ -316,7 +317,8 @@ A request may contain up to 10,000 ids (`dlr.api.max-verify-ids`). They are reso
 | `UNDELIV`, `FAILED`, `SMS_FAILED` | `FAILED` |
 | `EXPIRED`, `SMS_EXPIRED` | `EXPIRED` |
 | `REJECTD`, `REJECTED` | `REJECTED` |
-| `SMS_SENT` / `sms_sent`, `SUBMITTED` | `SENT` |
+| `READ` / `read` (WhatsApp) | `READ` |
+| `SMS_SENT` / `sms_sent`, `SUBMITTED`, `sent` (WhatsApp) | `SENT` |
 | anything else | `UNKNOWN` |
 
 The original value is always kept in `provider_status`. The mapping is set in `dlr.status-mapping`, and you can override it per provider with `dlr.provider-status-mapping.<SOURCE>`. Conflicting mappings stop the service at startup.
@@ -360,9 +362,10 @@ These secondary keys are stored and indexed: `external_message_id`, `correlation
 Default rules in `dlr.state-machine.transitions`:
 
 ```text
-UNKNOWN ─► SENT | DELIVERED | FAILED | EXPIRED | REJECTED
-SENT    ─► DELIVERED | FAILED | EXPIRED | REJECTED
-DELIVERED, FAILED, EXPIRED, REJECTED ─► (final, nothing)
+UNKNOWN   ─► SENT | DELIVERED | READ | FAILED | EXPIRED | REJECTED
+SENT      ─► DELIVERED | READ | FAILED | EXPIRED | REJECTED
+DELIVERED ─► READ   (WhatsApp read receipt)
+READ, FAILED, EXPIRED, REJECTED ─► (final, nothing)
 ```
 
 Every transition is evaluated against the persisted state while that row is locked (`SELECT … FOR UPDATE`):
@@ -547,6 +550,29 @@ In that block, `clicks` counts the click callbacks received, while `visited_coun
 
 ---
 
+## Meta WhatsApp DLRs
+
+Meta (WhatsApp Cloud API) status webhooks are posted to the same `POST /api/v1/dlr/receive`. They are detected from `"object": "whatsapp_business_account"`, or you can send `?source=META` (aliases `WHATSAPP`, `WA`). Sample: `samples/meta-whatsapp-status.json`.
+
+```json
+{"object":"whatsapp_business_account","entry":[{"id":"<WABA>","changes":[{"field":"messages","value":{
+  "messaging_product":"whatsapp","metadata":{"display_phone_number":"…","phone_number_id":"…"},
+  "statuses":[{"id":"wamid.HBgL…","status":"delivered","timestamp":"1727780000","recipient_id":"9190…",
+               "biz_opaque_callback_data":"…","conversation":{"id":"…"},"pricing":{"category":"utility"}}]}}]}]}
+```
+
+- **One webhook can carry several statuses.** Each one is validated, de-duplicated, run through the state machine and stored as its own row in `dlr_events`, with source `META`. The stored raw payload is that one status plus the webhook's `metadata`.
+- **Status mapping:** `sent` → `SENT`, `delivered` → `DELIVERED`, `read` → `READ`, `failed` → `FAILED`, anything else → `UNKNOWN`. A `read` after `delivered` moves the message to `READ`. A late `delivered` after `read` is `IGNORED`. In `/verify`, `READ` counts as delivered and satisfies `expected_status: DELIVERED`.
+- **Field mapping:** `id` (wamid) → `message_id`, `recipient_id` → `mobile`, `timestamp` (epoch seconds) → `dlr_received_at`, `errors[0].code` → `status_code` / `error_code`, `errors[0].title` + `message` + `error_data.details` → `error_reason`, `biz_opaque_callback_data` → `correlation_id`, `conversation.id` → `external_message_id`, `pricing.category` → `service`, `metadata.display_phone_number` → `sender`.
+- **Always answered with 200.** Meta retries non-2xx responses and eventually disables the webhook, so invalid statuses are stored as `REJECTED` but still acknowledged. The response lists each status's outcome.
+- **Webhooks without statuses** (inbound messages, template or account updates) are acknowledged with 200 and not stored.
+- **Callback URL check:** when the URL is saved in Meta, Meta calls `GET /api/v1/dlr/receive?hub.mode=subscribe&hub.verify_token=…&hub.challenge=…`. Set `DLR_META_VERIFY_TOKEN` to the same token, and the receiver answers with the challenge.
+- **Signature:** Meta signs with `X-Hub-Signature-256: sha256=<hex>`. To check it, set `DLR_HMAC_ENABLED=true`, `dlr.security.hmac.header-name=X-Hub-Signature-256` and `DLR_HMAC_SECRET=<app secret>`. HMAC applies to every callback, so only enable it if all senders sign.
+- **Live UI:** a **Meta WhatsApp** card (Delivered, Read, Failed, Rejected, Sent/pending), a Meta series in the chart, a Meta filter in the live feed, and a **Read** tile.
+- **Automation:** `dlr_helper.send_meta_dlr(wamid, status="delivered" | "read" | "sent" | "failed", …)` simulates a webhook. `wait_for_dlr` and `verify_dlrs` work with wamids.
+
+---
+
 ## Database
 
 The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`, `V3__multipart_message_ids.sql`, which adds `provider_message_id` and `part_number` to `dlr_events`, and `V4__create_dlr_click_events.sql`).
@@ -728,6 +754,7 @@ The full, commented configuration is in `src/main/resources/application.yml`, wi
 | `SERVER_PORT` | `8080` | HTTP port |
 | `DLR_TIMEZONE` | `Asia/Kolkata` | Zone for zoned or epoch provider timestamps and the receiver-time `received_at` fallback |
 | `DLR_INSTANCE_ID` | hostname | Written to `dlr_events.receiver_instance` |
+| `DLR_META_VERIFY_TOKEN` | – | Token for Meta's callback URL check (`GET /api/v1/dlr/receive?hub.mode=subscribe…`) |
 | `DLR_BILLING_ENABLED` | `true` | Accept billing DLRs (other billing settings are under `dlr.billing` in `application.yml`) |
 | `DLR_MAX_PAYLOAD_BYTES` | `10485760` | Max callback body (10 MB). Bulk-campaign billing callbacks carry one event per recipient, about 200 bytes each |
 | `DLR_BILLING_MAX_EVENTS` | `50000` | Max events in one billing callback |

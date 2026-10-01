@@ -33,31 +33,33 @@ public class LiveRepository {
         List<LiveFeedItem> items = new ArrayList<>();
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, mobile, provider_status,
-                       normalized_status, processing_status, coalesce(rejection_reason, processing_note) AS note
+                       normalized_status, processing_status, coalesce(rejection_reason, processing_note) AS note,
+                       raw_payload::text AS raw
                 FROM dlr_events WHERE id > :as AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "STATUS", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("mobile"), rs.getString("provider_status"), rs.getString("normalized_status"),
                 rs.getString("processing_status"), rs.getString("note"),
-                null, null, null, null, null, null, null)));
+                null, null, null, null, null, null, null, rs.getString("raw"))));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, billing_message_id, part_number, processing_status,
-                       coalesce(rejection_reason, processing_note) AS note, transaction_type, units, total_amount, currency
+                       coalesce(rejection_reason, processing_note) AS note, transaction_type, units, total_amount, currency,
+                       raw_event::text AS raw
                 FROM dlr_billing_events WHERE id > :ab AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "BILLING", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("billing_message_id"), integer(rs, "part_number"), null,
                 null, null, rs.getString("processing_status"), rs.getString("note"),
                 rs.getString("transaction_type"), integer(rs, "units"), plain(rs.getBigDecimal("total_amount")),
-                rs.getString("currency"), null, null, null)));
+                rs.getString("currency"), null, null, null, rs.getString("raw"))));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, contact, processing_status,
-                       processing_note, url_key, visited_count, device_type
+                       processing_note, url_key, visited_count, device_type, raw_payload::text AS raw
                 FROM dlr_click_events WHERE id > :ac AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "CLICK", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("contact"), null, null, rs.getString("processing_status"), rs.getString("processing_note"),
                 null, null, null, null, rs.getString("url_key"), integer(rs, "visited_count"),
-                rs.getString("device_type"))));
+                rs.getString("device_type"), rs.getString("raw"))));
         items.sort(Comparator.comparing(LiveFeedItem::createdAt).thenComparing(LiveFeedItem::id).reversed());
         return items.size() > limit ? items.subList(0, limit) : items;
     }
@@ -69,6 +71,7 @@ public class LiveRepository {
 
     static final String DEFAULT_SMS = "DEFAULT_SMS";
     static final String WEBENGAGE = "WEBENGAGE";
+    static final String META = "META";
     static final String SHORT_URL = "SHORT_URL";
     private static final String ACCEPTED = "processing_status IN ('APPLIED', 'IGNORED')";
 
@@ -84,6 +87,7 @@ public class LiveRepository {
         Map<String, Map<String, Long>> status = new LinkedHashMap<>();
         status.put(DEFAULT_SMS, new LinkedHashMap<>());
         status.put(WEBENGAGE, new LinkedHashMap<>());
+        status.put(META, new LinkedHashMap<>());
         jdbc.query("SELECT source, normalized_status, count(*) FROM dlr_events WHERE " + ACCEPTED + " AND " + window
                 + " GROUP BY 1, 2", p, rs -> {
             status.computeIfAbsent(rs.getString(1), k -> new LinkedHashMap<>())
@@ -107,7 +111,7 @@ public class LiveRepository {
                 (rs, n) -> new long[]{rs.getLong(1), rs.getLong(2), rs.getLong(3)});
 
         List<LiveStatsResponse.Category> categories = new ArrayList<>();
-        long tDlrs = 0, tDel = 0, tFail = 0, tRej = 0, tPend = 0, tBillEv = 0;
+        long tDlrs = 0, tDel = 0, tRead = 0, tFail = 0, tRej = 0, tPend = 0, tBillEv = 0;
         BigDecimal tAmount = BigDecimal.ZERO;
         java.util.Set<String> currencies = new java.util.TreeSet<>();
         for (Map.Entry<String, Map<String, Long>> e : status.entrySet()) {
@@ -116,11 +120,12 @@ public class LiveRepository {
             long delivered = by.getOrDefault("DELIVERED", 0L);
             long failed = by.getOrDefault("FAILED", 0L) + by.getOrDefault("EXPIRED", 0L);
             long rejected = by.getOrDefault("REJECTED", 0L);
-            long pending = dlrs - delivered - failed - rejected;      // SENT / UNKNOWN
+            long read = by.getOrDefault("READ", 0L);
+            long pending = dlrs - delivered - read - failed - rejected;      // SENT / UNKNOWN
             Object[] b = billing.getOrDefault(e.getKey(), new Object[]{0L, BigDecimal.ZERO, null});
-            categories.add(new LiveStatsResponse.Category(e.getKey(), label(e.getKey()), dlrs, delivered, failed,
+            categories.add(new LiveStatsResponse.Category(e.getKey(), label(e.getKey()), dlrs, delivered, read, failed,
                     rejected, pending, (Long) b[0], plain((BigDecimal) b[1]), (String) b[2], 0, 0, 0));
-            tDlrs += dlrs; tDel += delivered; tFail += failed; tRej += rejected; tPend += pending;
+            tDlrs += dlrs; tDel += delivered; tRead += read; tFail += failed; tRej += rejected; tPend += pending;
         }
         for (Object[] b : billing.values()) {
             tBillEv += (Long) b[0];
@@ -129,7 +134,7 @@ public class LiveRepository {
                 currencies.add((String) b[2]);
             }
         }
-        categories.add(new LiveStatsResponse.Category(SHORT_URL, label(SHORT_URL), 0, 0, 0, 0, 0, 0, null, null,
+        categories.add(new LiveStatsResponse.Category(SHORT_URL, label(SHORT_URL), 0, 0, 0, 0, 0, 0, 0, null, null,
                 click[0], click[1], click[2]));
         // billing callbacks rejected as a whole (e.g. too large / malformed) are stored in dlr_events
         Long billingRejected = jdbc.queryForObject("""
@@ -137,7 +142,7 @@ public class LiveRepository {
                   AND (raw_payload->>'event_type' = 'billing'
                        OR raw_payload->>'_prefix' LIKE '{"event_type":"billing"%')""" + " AND " + window, p, Long.class);
         String currency = currencies.isEmpty() ? null : currencies.size() == 1 ? currencies.iterator().next() : "MIXED";
-        LiveStatsResponse.Totals totals = new LiveStatsResponse.Totals(tDlrs, tDel, tFail, tRej, tPend, tBillEv,
+        LiveStatsResponse.Totals totals = new LiveStatsResponse.Totals(tDlrs, tDel, tRead, tFail, tRej, tPend, tBillEv,
                 plain(tAmount), currency, click[0],
                 billingRejected == null ? 0 : billingRejected);
 
@@ -150,15 +155,15 @@ public class LiveRepository {
         TreeMap<OffsetDateTime, long[]> buckets = new TreeMap<>();
         jdbc.query("SELECT date_trunc('" + unit + "', created_at), source, count(*) FROM dlr_events WHERE " + ACCEPTED
                 + " AND " + chartWindow + " GROUP BY 1, 2", cp, rs -> {
-            int slot = WEBENGAGE.equals(rs.getString(2)) ? 1 : 0;
-            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[3])[slot] += rs.getLong(3);
+            int slot = WEBENGAGE.equals(rs.getString(2)) ? 1 : META.equals(rs.getString(2)) ? 2 : 0;
+            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[4])[slot] += rs.getLong(3);
         });
         jdbc.query("SELECT date_trunc('" + unit + "', created_at), count(*) FROM dlr_click_events "
                 + "WHERE processing_status = 'APPLIED' AND " + chartWindow + " GROUP BY 1", cp, rs -> {
-            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[3])[2] += rs.getLong(2);
+            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[4])[3] += rs.getLong(2);
         });
         List<LiveStatsResponse.Bucket> series = new ArrayList<>();
-        buckets.forEach((t, c) -> series.add(new LiveStatsResponse.Bucket(t, c[0], c[1], c[2])));
+        buckets.forEach((t, c) -> series.add(new LiveStatsResponse.Bucket(t, c[0], c[1], c[2], c[3])));
 
         OffsetDateTime now = jdbc.getJdbcTemplate().queryForObject("SELECT now()", OffsetDateTime.class);
         return new LiveStatsResponse(minutes, minutes > 0 ? now.minusMinutes(minutes) : null, now, totals, categories,
@@ -169,6 +174,7 @@ public class LiveRepository {
         return switch (key) {
             case DEFAULT_SMS -> "Default SMS";
             case WEBENGAGE -> "WebEngage";
+            case META -> "Meta WhatsApp";
             case SHORT_URL -> "Short URL";
             default -> key;
         };

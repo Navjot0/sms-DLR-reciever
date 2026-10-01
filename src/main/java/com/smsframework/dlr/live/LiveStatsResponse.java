@@ -19,7 +19,7 @@ public record LiveStatsResponse(
         int bucketMinutes,          // 1 (per minute) or 60 (per hour)
         List<Bucket> series) {
 
-    public record Totals(long dlrs, long delivered, long failed, long rejected, long pending,
+    public record Totals(long dlrs, long delivered, long read, long failed, long rejected, long pending,
                          long billingEvents, BigDecimal billedAmount, String billedCurrency, long clicks,
                          long billingCallbacksRejected) {   // whole billing callbacks that could not be processed
     }
@@ -28,11 +28,11 @@ public record LiveStatsResponse(
      * One category card. For DEFAULT_SMS / WEBENGAGE the DLR fields are filled; for SHORT_URL the click fields.
      */
     public record Category(String key, String label,
-                           long dlrs, long delivered, long failed, long rejected, long pending,
+                           long dlrs, long delivered, long read, long failed, long rejected, long pending,
                            long billingEvents, BigDecimal billedAmount, String billedCurrency,
                            long clicks, long clickedMessages, long links) {
     }
 
-    public record Bucket(OffsetDateTime time, long defaultSms, long webengage, long shortUrl) {
+    public record Bucket(OffsetDateTime time, long defaultSms, long webengage, long meta, long shortUrl) {
     }
 }

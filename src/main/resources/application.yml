@@ -80,6 +80,9 @@ dlr:
       SMS: DEFAULT_SMS
       WE: WEBENGAGE
       WEB_ENGAGE: WEBENGAGE
+      WHATSAPP: META
+      WA: META
+      META_WHATSAPP: META
 
   # NORMALIZED_STATUS -> provider statuses (case-insensitive). Unlisted -> UNKNOWN.
   status-mapping:
@@ -87,7 +90,8 @@ dlr:
     FAILED: [UNDELIV, FAILED, SMS_FAILED]
     EXPIRED: [EXPIRED, SMS_EXPIRED]
     REJECTED: [REJECTD, REJECTED]
-    SENT: [SMS_SENT, SUBMITTED]
+    READ: [READ]                     # WhatsApp (Meta) / RCS
+    SENT: [SMS_SENT, SUBMITTED, SENT]
 
   # Optional per-provider overrides, checked before the global mapping:
   # provider-status-mapping:
@@ -98,9 +102,10 @@ dlr:
     # CURRENT -> allowed NEXT. Final states map to [] (no downgrade, no flip-flop).
     # To allow e.g. a late DELIVERED to override FAILED: FAILED: [DELIVERED]
     transitions:
-      UNKNOWN: [SENT, DELIVERED, FAILED, EXPIRED, REJECTED]
-      SENT: [DELIVERED, FAILED, EXPIRED, REJECTED]
-      DELIVERED: []
+      UNKNOWN: [SENT, DELIVERED, READ, FAILED, EXPIRED, REJECTED]
+      SENT: [DELIVERED, READ, FAILED, EXPIRED, REJECTED]
+      DELIVERED: [READ]                  # WhatsApp: read receipt after delivery
+      READ: []
       FAILED: []
       EXPIRED: []
       REJECTED: []
@@ -123,6 +128,13 @@ dlr:
     event-types: [short_link]
     default-source: DEFAULT_SMS          # recorded when the callback carries no X-DLR-Source
     sources: [DEFAULT_SMS]               # sources allowed to send click events
+
+  # Meta (WhatsApp Cloud API) webhooks: {"object":"whatsapp_business_account","entry":[...statuses...]}
+  # posted to /api/v1/dlr/receive (detected from the payload, or ?source=META). Always answered 200.
+  # Meta's callback-URL check (GET ?hub.mode=subscribe&hub.verify_token=..&hub.challenge=..) needs this token.
+  # Signature: set DLR_HMAC_ENABLED=true, header X-Hub-Signature-256 and the app secret as DLR_HMAC_SECRET.
+  meta:
+    verify-token: ${DLR_META_VERIFY_TOKEN:}
 
   # Billing DLRs: {"event_type":"billing","events":[{"transaction_type":"debit","message_id":"<id>:1",...}]}
   # received on the same /api/v1/dlr/receive endpoint and correlated to the status DLR by message_id.

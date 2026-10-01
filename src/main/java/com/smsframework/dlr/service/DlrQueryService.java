@@ -195,14 +195,15 @@ public class DlrQueryService {
             received++;
             NormalizedStatus st = NormalizedStatus.parse(s.getNormalizedStatus());
             switch (st) {
-                case DELIVERED -> delivered++;
+                case DELIVERED, READ -> delivered++;   // read implies delivered
                 case FAILED -> failed++;
                 case EXPIRED -> expired++;
                 case REJECTED -> rejected++;
                 case SENT -> sent++;
                 case UNKNOWN -> unknown++;
             }
-            Boolean isMatch = matching ? (expected == null || st == expected) && (!requireBilling || b != null)
+            Boolean isMatch = matching ? (expected == null || st == expected
+                    || (expected == NormalizedStatus.DELIVERED && st == NormalizedStatus.READ)) && (!requireBilling || b != null)
                     && (!requireClick || c != null) : null;
             if (Boolean.TRUE.equals(isMatch)) {
                 matched++;

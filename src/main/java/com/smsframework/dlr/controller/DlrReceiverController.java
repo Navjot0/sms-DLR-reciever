@@ -10,7 +10,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -44,11 +46,35 @@ public class DlrReceiverController {
         this.properties = properties;
     }
 
+    /**
+     * Meta webhook verification: Meta calls GET {callback}?hub.mode=subscribe&hub.verify_token=..&hub.challenge=..
+     * when the callback URL is saved. Answer with the challenge when the token matches dlr.meta.verify-token.
+     */
+    @GetMapping(value = "/receive")
+    public ResponseEntity<String> verifyWebhook(@RequestParam(name = "hub.mode", required = false) String mode,
+                                                @RequestParam(name = "hub.verify_token", required = false) String token,
+                                                @RequestParam(name = "hub.challenge", required = false) String challenge) {
+        String expected = properties.getMeta().getVerifyToken();
+        if (!"subscribe".equals(mode) || challenge == null) {
+            return ResponseEntity.badRequest().contentType(MediaType.TEXT_PLAIN).body("expected hub.mode=subscribe and hub.challenge");
+        }
+        if (expected == null || expected.isBlank() || !java.security.MessageDigest.isEqual(
+                expected.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                String.valueOf(token).getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).contentType(MediaType.TEXT_PLAIN).body("verify token mismatch");
+        }
+        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(challenge);
+    }
+
     @PostMapping(value = "/receive", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> receive(@RequestBody(required = false) String body, HttpServletRequest request) {
         String explicitSource = sourceResolver.resolveExplicit(request);
         ProcessingResult r = processingService.process(explicitSource, body);
 
+        if (r.isMeta()) {
+            // Always 200 for Meta: it retries non-2xx and disables failing webhooks. Rejects are persisted.
+            return ResponseEntity.ok(r.meta());
+        }
         if (r.isClick()) {
             return ResponseEntity.ok(r.click());
         }

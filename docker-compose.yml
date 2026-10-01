@@ -19,6 +19,7 @@ x-receiver-env: &receiver-env
   DLR_API_KEYS: ${DLR_API_KEYS:-}
   DLR_HMAC_ENABLED: ${DLR_HMAC_ENABLED:-false}
   DLR_HMAC_SECRET: ${DLR_HMAC_SECRET:-}
+  DLR_META_VERIFY_TOKEN: ${DLR_META_VERIFY_TOKEN:-}
 
 services:
   postgres:

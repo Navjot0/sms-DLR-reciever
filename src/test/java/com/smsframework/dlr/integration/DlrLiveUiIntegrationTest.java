@@ -41,6 +41,10 @@ class DlrLiveUiIntegrationTest extends AbstractIntegrationTest {
         assertThat(first.at("/items/1/total_amount").decimalValue()).isEqualByComparingTo("2");
         assertThat(first.at("/items/2/kind").asText()).isEqualTo("STATUS");
         assertThat(first.at("/items/2/normalized_status").asText()).isEqualTo("DELIVERED");
+        // raw callback is included as JSON (status: whole payload, billing: the event, click: whole payload)
+        assertThat(first.at("/items/2/raw/payload/message_id").asText()).isEqualTo("live-1");
+        assertThat(first.at("/items/1/raw/message_id").asText()).isEqualTo("live-1:1");
+        assertThat(first.at("/items/0/raw/event").asText()).isEqualTo("short_link");
         JsonNode cursor = first.get("cursor");
 
         postDlr(TestPayloads.defaultSms("live-2", "UNDELIV"), Map.of("X-DLR-Source", "DEFAULT_SMS"));

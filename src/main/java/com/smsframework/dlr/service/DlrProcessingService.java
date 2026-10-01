@@ -22,6 +22,8 @@ import com.smsframework.dlr.entity.DlrMessageStatus;
 import com.smsframework.dlr.exception.DlrPersistenceException;
 import com.smsframework.dlr.exception.DlrValidationException;
 import com.smsframework.dlr.mapper.DlrMapper;
+import com.smsframework.dlr.meta.MetaWebhookResult;
+import com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter;
 import com.smsframework.dlr.repository.DlrEventRepository;
 import com.smsframework.dlr.repository.DlrMessageStatusRepository;
 import com.smsframework.dlr.util.MessageIdParts;
@@ -58,7 +60,13 @@ public class DlrProcessingService {
     /** Outcome of one callback, returned to the controller (and to the provider as an ack). */
     public record ProcessingResult(Long eventId, String source, String messageId, ProcessingStatus processingStatus,
                                    NormalizedStatus normalizedStatus, String currentStatus, String rejectionReason,
-                                   String note, boolean payloadTooLarge, BillingResult billing, ClickResult click) {
+                                   String note, boolean payloadTooLarge, BillingResult billing, ClickResult click,
+                                   MetaWebhookResult meta) {
+
+        /** True when this callback was a Meta (WhatsApp) webhook (see {@link #meta()}). */
+        public boolean isMeta() {
+            return meta != null;
+        }
 
         /** True when this callback was a short-link click event (see {@link #click()}). */
         public boolean isClick() {
@@ -87,6 +95,7 @@ public class DlrProcessingService {
     private final BillingProcessingService billingService;
     private final ShortLinkClickAdapter clickAdapter;
     private final ClickProcessingService clickService;
+    private final MetaWhatsAppDlrAdapter metaAdapter;
 
     public DlrProcessingService(DlrAdapterRegistry adapters, SourceResolver sourceResolver,
                                 DedupKeyGenerator dedupKeyGenerator, DlrStateMachine stateMachine,
@@ -94,7 +103,8 @@ public class DlrProcessingService {
                                 DlrMetrics metrics, TransactionTemplate tx, ObjectMapper objectMapper,
                                 DlrProperties properties, List<BillingDlrAdapter> billingAdapters,
                                 BillingProcessingService billingService, ShortLinkClickAdapter clickAdapter,
-                                ClickProcessingService clickService) {
+                                ClickProcessingService clickService, MetaWhatsAppDlrAdapter metaAdapter) {
+        this.metaAdapter = metaAdapter;
         this.clickAdapter = clickAdapter;
         this.clickService = clickService;
         this.billingAdapters = List.copyOf(billingAdapters);
@@ -176,6 +186,12 @@ public class DlrProcessingService {
         // 3a. Short-link click ({"event":"short_link","data":{...}}) ----------------------------------
         if (clickAdapter.isClickPayload(json)) {
             return processClick(explicitSource, json, rawForStorage);
+        }
+
+        // 3a'. Meta (WhatsApp Cloud API) webhook: one callback, N statuses --------------------------------
+        if ((explicitSource == null || MetaWhatsAppDlrAdapter.SOURCE.equalsIgnoreCase(explicitSource))
+                && metaAdapter.isWebhook(json)) {
+            return processMetaWebhook(json);
         }
 
         // 3b. Billing DLR ({"event_type":"billing","events":[...]}) -----------------------------------
@@ -269,6 +285,56 @@ public class DlrProcessingService {
         }
     }
 
+    /** Each status of a Meta webhook is validated, de-duplicated and run through the state machine on its own. */
+    private ProcessingResult processMetaWebhook(JsonNode webhook) {
+        String source = MetaWhatsAppDlrAdapter.SOURCE;
+        List<ObjectNode> envelopes = metaAdapter.statuses(webhook);
+        if (envelopes.isEmpty()) {
+            // inbound messages, template/account updates ...: not a delivery report, nothing to store
+            String note = "no statuses in webhook (" + metaAdapter.nonStatusContent(webhook) + ")";
+            log.info("Meta webhook without statuses acknowledged: {}", note);
+            return metaResult(new MetaWebhookResult(source, 0, 0, 0, 0, 0, note, List.of()));
+        }
+        int applied = 0, ignored = 0, duplicates = 0, rejected = 0;
+        List<MetaWebhookResult.Item> items = new java.util.ArrayList<>(envelopes.size());
+        for (ObjectNode env : envelopes) {
+            String raw = env.toString();
+            ProcessingResult r;
+            NormalizedDlr dlr = null;
+            try {
+                dlr = metaAdapter.normalize(env);
+            } catch (DlrValidationException e) {
+                r = reject(source, safePeek(metaAdapter, env), raw, "meta: " + e.getReason(), false);
+                rejected++;
+                items.add(new MetaWebhookResult.Item(r.eventId(), r.messageId(), null, null,
+                        ProcessingStatus.REJECTED.name(), null, e.getReason()));
+                continue;
+            }
+            NormalizedDlr d = dlr;
+            metrics.received(source);
+            r = tx.execute(status -> persist(d, raw));
+            recordMetricsAndLog(d, r);
+            switch (r.processingStatus()) {
+                case APPLIED -> applied++;
+                case IGNORED -> ignored++;
+                case DUPLICATE -> duplicates++;
+                default -> rejected++;
+            }
+            items.add(new MetaWebhookResult.Item(r.eventId(), d.getMessageId(), d.getProviderStatus(),
+                    d.getNormalizedStatus().name(), r.processingStatus().name(), r.currentStatus(), r.note()));
+            MDC_KEYS.forEach(MDC::remove);
+        }
+        return metaResult(new MetaWebhookResult(source, envelopes.size(), applied, ignored, duplicates, rejected,
+                null, items));
+    }
+
+    private static ProcessingResult metaResult(MetaWebhookResult m) {
+        ProcessingStatus overall = m.statuses() == 0 ? ProcessingStatus.IGNORED
+                : m.rejected() == m.statuses() ? ProcessingStatus.REJECTED
+                : m.duplicates() == m.statuses() ? ProcessingStatus.DUPLICATE : ProcessingStatus.APPLIED;
+        return new ProcessingResult(null, m.source(), null, overall, null, null, null, m.note(), false, null, null, m);
+    }
+
     private ProcessingResult processClick(String explicitSource, JsonNode json, String raw) {
         String source = explicitSource != null ? explicitSource : properties.getClicks().getDefaultSource();
         if (!clickAdapter.acceptsSource(source)) {
@@ -285,7 +351,7 @@ public class DlrProcessingService {
         ClickResult cr = clickService.process(source, click, raw, instanceId);
         ProcessingStatus ps = "DUPLICATE".equals(cr.processingStatus()) ? ProcessingStatus.DUPLICATE : ProcessingStatus.APPLIED;
         return new ProcessingResult(cr.eventId(), source, click.messageId(), ps, null, null, null, cr.note(), false,
-                null, cr);
+                null, cr, null);
     }
 
     private ProcessingResult processBilling(BillingDlrAdapter adapter, String explicitSource, JsonNode json, String raw) {
@@ -306,7 +372,7 @@ public class DlrProcessingService {
             case "DUPLICATE" -> ProcessingStatus.DUPLICATE;
             default -> ProcessingStatus.APPLIED;
         };
-        return new ProcessingResult(null, source, null, overall, null, null, null, null, false, br, null);
+        return new ProcessingResult(null, source, null, overall, null, null, null, null, false, br, null, null);
     }
 
     private ProcessingResult reject(String source, String messageId, String raw, String reason, boolean tooLarge) {
@@ -325,12 +391,12 @@ public class DlrProcessingService {
         log.warn("DLR rejected source={} message_id={} processing_status=REJECTED event_id={} reason=\"{}\"",
                 src, messageId, id, reason);
         return new ProcessingResult(id, event.getSource(), messageId, ProcessingStatus.REJECTED, null, null, reason,
-                null, tooLarge, null, null);
+                null, tooLarge, null, null, null);
     }
 
     private ProcessingResult result(Long eventId, NormalizedDlr dlr, ProcessingStatus ps, String currentStatus, String note) {
         return new ProcessingResult(eventId, dlr.getSource(), dlr.getMessageId(), ps, dlr.getNormalizedStatus(),
-                currentStatus, null, note, false, null, null);
+                currentStatus, null, note, false, null, null, null);
     }
 
     private void recordMetricsAndLog(NormalizedDlr dlr, ProcessingResult r) {

@@ -7,6 +7,8 @@ package com.smsframework.dlr.domain;
 public enum NormalizedStatus {
     SENT,
     DELIVERED,
+    /** Read by the recipient (WhatsApp/RCS). Comes after DELIVERED. */
+    READ,
     FAILED,
     EXPIRED,
     REJECTED,
