@@ -346,6 +346,16 @@
     const total = c.dlrs || 0;
     const seg = (v, col) => v ? `<span style="width:${100 * v / total}%;background:${col}" title=""></span>` : "";
     const meta = c.key === "META";
+    if (c.key === "WEBENGAGE") {
+      // WebEngage only reports sent, failed and rejected (no delivered receipt, no billing)
+      return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">${n0(total)} DLRs</span></h3><div class="nums">`
+        + num("Sent", n0(c.pending), pct(c.pending, total), "var(--good)")
+        + num("Failed", n0(c.failed), pct(c.failed, total), "var(--critical)")
+        + num("Rejected", n0(c.rejected), pct(c.rejected, total), "var(--serious)")
+        + num("Total DLRs", n0(total))
+        + `</div>${total ? `<div class="meter" role="img" aria-label="Sent ${c.pending}, failed ${c.failed}, rejected ${c.rejected}">`
+        + seg(c.pending, "var(--good)") + seg(c.failed, "var(--critical)") + seg(c.rejected, "var(--serious)") + `</div>` : ""}</div>`;
+    }
     return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">${n0(total)} ${meta ? "messages" : "DLRs"}</span></h3><div class="nums">`
       + num("Delivered", n0(c.delivered), pct(c.delivered, total) + (meta ? " · incl. read" : ""), "var(--good)")
       + (meta ? num("Read", n0(c.read), pct(c.read, total), "var(--good-ink)") : "")

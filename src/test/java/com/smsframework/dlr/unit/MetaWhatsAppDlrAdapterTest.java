@@ -50,7 +50,8 @@ class MetaWhatsAppDlrAdapterTest {
         assertThat(d.getNormalizedStatus()).isEqualTo(NormalizedStatus.DELIVERED);
         assertThat(d.getMobile()).isEqualTo("919000000001");
         assertThat(d.getCorrelationId()).isEqualTo("camp-7");
-        assertThat(d.getExternalMessageId()).isEqualTo("conv-1");
+        assertThat(d.getExternalMessageId()).isNull();
+        assertThat(d.getRequestId()).isEqualTo("conv-1");
         assertThat(d.getService()).isEqualTo("marketing");
         assertThat(d.getSender()).isEqualTo("15550001111");
         assertThat(d.getDlrReceivedAt()).isEqualTo(LocalDateTime.of(2024, 10, 1, 16, 23, 20));  // Asia/Kolkata
@@ -88,5 +89,20 @@ class MetaWhatsAppDlrAdapterTest {
     void missingIdIsRejected() {
         assertThatThrownBy(() -> adapter.normalize(json("{\"status\":{\"status\":\"sent\"}}")))
                 .isInstanceOf(DlrValidationException.class).hasMessageContaining("id (wamid) is missing");
+    }
+
+    @Test
+    void platformMessageIdIsUsedInsteadOfTheWamid() {
+        NormalizedDlr d = adapter.normalize(json("""
+                {"field":"messages","object":"whatsapp_business_account","status":{
+                  "id":"wamid.Hc0NvcW","status":"delivered","timestamp":"1791213334",
+                  "message_id":"7e305e16-a9f5-4b8d-9741-34da6eb45dc4","recipient_id":"918999620083"},
+                 "entry_id":"102934821739482","metadata":{"phone_number_id":"919691926477",
+                 "display_phone_number":"15550001111"},"messaging_product":"whatsapp"}"""));
+        assertThat(d.getMessageId()).isEqualTo("7e305e16-a9f5-4b8d-9741-34da6eb45dc4");
+        assertThat(d.getExternalMessageId()).isEqualTo("wamid.Hc0NvcW");
+        assertThat(d.getNormalizedStatus()).isEqualTo(NormalizedStatus.DELIVERED);
+        assertThat(d.getMobile()).isEqualTo("918999620083");
+        assertThat(adapter.peekMessageId(json("{\"status\":{\"id\":\"w\",\"message_id\":\"m-1\"}}"))).isEqualTo("m-1");
     }
 }

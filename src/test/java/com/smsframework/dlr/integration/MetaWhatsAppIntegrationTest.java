@@ -72,6 +72,24 @@ class MetaWhatsAppIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void platformMessageIdIsTheLookupKeyAndTheWamidIsSearchable() {
+        String st = """
+                {"id":"wamid.PLAT1","status":"%s","timestamp":"%d","message_id":"7e305e16-a9f5-4b8d-9741-34da6eb45dc4",
+                 "recipient_id":"918999620083"}""";
+        postDlr(webhook(st.formatted("delivered", 1791213334L)), Map.of());
+        postDlr(webhook(st.formatted("read", 1791213340L)), Map.of());
+
+        JsonNode s = getJson("/api/v1/dlr/7e305e16-a9f5-4b8d-9741-34da6eb45dc4");
+        assertThat(s.get("received").asBoolean()).isTrue();
+        assertThat(s.get("status").asText()).isEqualTo("READ");
+        assertThat(s.get("external_message_id").asText()).isEqualTo("wamid.PLAT1");
+        assertThat(getJson("/api/v1/dlr/wamid.PLAT1").get("received").asBoolean()).isFalse();
+        JsonNode found = getJson("/api/v1/dlr/search?external_message_id=wamid.PLAT1");
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).get("message_id").asText()).isEqualTo("7e305e16-a9f5-4b8d-9741-34da6eb45dc4");
+    }
+
+    @Test
     void inboundMessageWebhookIsAcknowledgedWithoutStoring() {
         HttpResponse<String> r = postDlr("""
                 {"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{

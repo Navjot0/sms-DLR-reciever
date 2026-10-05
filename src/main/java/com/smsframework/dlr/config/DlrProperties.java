@@ -58,7 +58,7 @@ public class DlrProperties {
         m.put("DELIVERED", new ArrayList<>(List.of("DELIVRD", "DELIVERED", "SMS_DELIVERED")));
         m.put("FAILED", new ArrayList<>(List.of("UNDELIV", "FAILED", "SMS_FAILED")));
         m.put("EXPIRED", new ArrayList<>(List.of("EXPIRED", "SMS_EXPIRED")));
-        m.put("REJECTED", new ArrayList<>(List.of("REJECTD", "REJECTED")));
+        m.put("REJECTED", new ArrayList<>(List.of("REJECTD", "REJECTED", "SMS_REJECTED")));
         m.put("READ", new ArrayList<>(List.of("READ")));
         m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED", "SENT")));
         return m;

@@ -31,10 +31,11 @@ import static com.smsframework.dlr.util.DlrValues.parseTimestamp;
  * </pre>
  *
  * One webhook can carry several statuses (and several entries/changes); each becomes its own DLR event.
- * Mapping: id (wamid) -&gt; message_id, status -&gt; provider_status (sent/delivered/read/failed -&gt;
+ * Mapping: status.message_id (the platform's own id, when present) -&gt; message_id with the wamid kept as
+ * external_message_id; otherwise id (wamid) -&gt; message_id. Then status -&gt; provider_status (sent/delivered/read/failed -&gt;
  * SENT/DELIVERED/READ/FAILED), recipient_id -&gt; mobile, timestamp (epoch s) -&gt; dlr_received_at,
  * errors[0].code -&gt; status_code/error_code, biz_opaque_callback_data -&gt; correlation_id,
- * conversation.id -&gt; external_message_id, pricing.category -&gt; service,
+ * conversation.id -&gt; request_id, pricing.category -&gt; service,
  * metadata.display_phone_number -&gt; sender.
  */
 @Component
@@ -130,8 +131,8 @@ public class MetaWhatsAppDlrAdapter implements DlrProviderAdapter {
         if (payload == null) {
             return null;
         }
-        JsonNode v = status(payload).path("id");
-        return v.isValueNode() ? blankToNull(v.asText()) : null;
+        String own = text(status(payload), "message_id");
+        return own != null ? own : text(status(payload), "id");
     }
 
     /** Accepts one envelope from {@link #statuses} or a bare status object. */
@@ -141,12 +142,16 @@ public class MetaWhatsAppDlrAdapter implements DlrProviderAdapter {
             throw new DlrValidationException(SOURCE, "payload must be a JSON object");
         }
         JsonNode s = status(payload);
-        String id = text(s, "id");
+        // The platform adds its own message id next to Meta's wamid: {"id":"wamid...","message_id":"<uuid>"}.
+        // That id is what the send API returned, so it is the lookup key; the wamid is kept as external_message_id.
+        String wamid = text(s, "id");
+        String own = text(s, "message_id");
+        String id = own != null ? own : wamid;
         String providerStatus = text(s, "status");
         String recipient = text(s, "recipient_id");
         List<String> missing = new ArrayList<>();
         if (id == null) {
-            missing.add("id (wamid) is missing");
+            missing.add("message_id / id (wamid) is missing");
         }
         if (providerStatus == null) {
             missing.add("status is missing");
@@ -185,7 +190,8 @@ public class MetaWhatsAppDlrAdapter implements DlrProviderAdapter {
                 .errorReason(errorReason)
                 .dlrReceivedAt(parseTimestamp(text(s, "timestamp"), zone).orElse(null))
                 .correlationId(text(s, "biz_opaque_callback_data"))
-                .externalMessageId(text(s.path("conversation"), "id"))
+                .externalMessageId(own != null ? wamid : null)
+                .requestId(text(s.path("conversation"), "id"))
                 .service(text(s.path("pricing"), "category"))
                 .sender(text(metadata, "display_phone_number"));
     }

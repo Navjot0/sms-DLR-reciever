@@ -109,7 +109,7 @@ The page is served by the receiver itself and needs no build step or external as
 |---|---|
 | Header | Service and database health, a live/paused indicator, the time window (15 min to 30 days, or all time), the refresh interval, an API key and a light/dark toggle |
 | Totals | Total DLRs, Delivered, Failed (including expired), Rejected, Billing (events and net amount) and Short URL clicks |
-| Category cards | **Default SMS** and **WebEngage**: Delivered, Failed, Rejected, Sent/pending, Billing and Total DLRs, with percentages and a bar. **Short URL**: clicks, messages clicked and distinct links |
+| Category cards | **Default SMS**: Delivered, Failed, Rejected, Sent/pending, Billing and Total DLRs, with percentages and a bar. **WebEngage**: Sent, Failed, Rejected and Total DLRs (WebEngage reports no delivered receipt). **Short URL**: clicks, messages clicked and distinct links |
 | Chart | DLRs per minute (per hour for 7 days and longer), stacked by Default SMS, WebEngage and Short URL clicks, with a hover tooltip |
 | **Live feed** | Incoming status DLRs, billing events and clicks, newest first. New rows are highlighted. You can filter by category, show or hide billing, filter by status, and search by message id, mobile or status. Clicking a message id opens the lookup |
 | **Message lookup** | One message, with or without `:part`: delivery state and parts, billing summary, click summary, and every callback as a timeline with its raw JSON. It can auto-refresh. `/ui/?message_id=<id>` links directly to it |
@@ -316,7 +316,7 @@ A request may contain up to 10,000 ids (`dlr.api.max-verify-ids`). They are reso
 | `DELIVRD`, `DELIVERED`, `SMS_DELIVERED` | `DELIVERED` |
 | `UNDELIV`, `FAILED`, `SMS_FAILED` | `FAILED` |
 | `EXPIRED`, `SMS_EXPIRED` | `EXPIRED` |
-| `REJECTD`, `REJECTED` | `REJECTED` |
+| `REJECTD`, `REJECTED`, `SMS_REJECTED` | `REJECTED` |
 | `READ` / `read` (WhatsApp) | `READ` |
 | `SMS_SENT` / `sms_sent`, `SUBMITTED`, `sent` (WhatsApp) | `SENT` |
 | anything else | `UNKNOWN` |
@@ -563,7 +563,8 @@ Meta (WhatsApp Cloud API) status webhooks are posted to the same `POST /api/v1/d
 
 - **One webhook can carry several statuses.** Each one is validated, de-duplicated, run through the state machine and stored as its own row in `dlr_events`, with source `META`. The stored raw payload is that one status plus the webhook's `metadata`.
 - **Status mapping:** `sent` → `SENT`, `delivered` → `DELIVERED`, `read` → `READ`, `failed` → `FAILED`, anything else → `UNKNOWN`. A `read` after `delivered` moves the message to `READ`. A late `delivered` after `read` is `IGNORED`. In `/verify`, `READ` counts as delivered and satisfies `expected_status: DELIVERED`.
-- **Field mapping:** `id` (wamid) → `message_id`, `recipient_id` → `mobile`, `timestamp` (epoch seconds) → `dlr_received_at`, `errors[0].code` → `status_code` / `error_code`, `errors[0].title` + `message` + `error_data.details` → `error_reason`, `biz_opaque_callback_data` → `correlation_id`, `conversation.id` → `external_message_id`, `pricing.category` → `service`, `metadata.display_phone_number` → `sender`.
+- **Message id:** when the status carries the platform's own `message_id` (`{"id":"wamid…","message_id":"<uuid>"}`), that is stored as `message_id` and the wamid as `external_message_id` (find it with `/search?external_message_id=wamid…`). Without it, the wamid is the `message_id`.
+- **Field mapping:** `recipient_id` → `mobile`, `timestamp` (epoch seconds) → `dlr_received_at`, `errors[0].code` → `status_code` / `error_code`, `errors[0].title` + `message` + `error_data.details` → `error_reason`, `biz_opaque_callback_data` → `correlation_id`, `conversation.id` → `request_id`, `pricing.category` → `service`, `metadata.display_phone_number` → `sender`.
 - **Always answered with 200.** Meta retries non-2xx responses and eventually disables the webhook, so invalid statuses are stored as `REJECTED` but still acknowledged. The response lists each status's outcome.
 - **Webhooks without statuses** (inbound messages, template or account updates) are acknowledged with 200 and not stored.
 - **Callback URL check:** when the URL is saved in Meta, Meta calls `GET /api/v1/dlr/receive?hub.mode=subscribe&hub.verify_token=…&hub.challenge=…`. Set `DLR_META_VERIFY_TOKEN` to the same token, and the receiver answers with the challenge.
