@@ -1,0 +1,24 @@
+{
+  "eventType": "Bounce",
+  "mail": {
+    "timestamp": "2026-07-23T10:15:28.000Z",
+    "source": "news@brand.example",
+    "messageId": "0100018f-ses-0002",
+    "destination": [
+      "nobody@example.com"
+    ]
+  },
+  "bounce": {
+    "bounceType": "Permanent",
+    "bounceSubType": "General",
+    "timestamp": "2026-07-23T10:15:31.000Z",
+    "bouncedRecipients": [
+      {
+        "emailAddress": "nobody@example.com",
+        "action": "failed",
+        "status": "5.1.1",
+        "diagnosticCode": "smtp; 550 5.1.1 user unknown"
+      }
+    ]
+  }
+}

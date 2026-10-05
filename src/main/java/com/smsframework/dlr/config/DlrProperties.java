@@ -55,12 +55,12 @@ public class DlrProperties {
 
     public static Map<String, List<String>> defaultStatusMapping() {
         Map<String, List<String>> m = new LinkedHashMap<>();
-        m.put("DELIVERED", new ArrayList<>(List.of("DELIVRD", "DELIVERED", "SMS_DELIVERED", "MESSAGE_DELIVERED")));
-        m.put("FAILED", new ArrayList<>(List.of("UNDELIV", "FAILED", "SMS_FAILED", "MESSAGE_FAILED", "INTERNAL_ERROR")));
+        m.put("DELIVERED", new ArrayList<>(List.of("DELIVRD", "DELIVERED", "SMS_DELIVERED", "MESSAGE_DELIVERED", "DELIVERY", "DELIVER")));
+        m.put("FAILED", new ArrayList<>(List.of("UNDELIV", "FAILED", "SMS_FAILED", "MESSAGE_FAILED", "INTERNAL_ERROR", "BOUNCE")));
         m.put("EXPIRED", new ArrayList<>(List.of("EXPIRED", "SMS_EXPIRED")));
-        m.put("REJECTED", new ArrayList<>(List.of("REJECTD", "REJECTED", "SMS_REJECTED")));
-        m.put("READ", new ArrayList<>(List.of("READ", "MESSAGE_READ")));
-        m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED", "SENT", "MESSAGE_SENT")));
+        m.put("REJECTED", new ArrayList<>(List.of("REJECTD", "REJECTED", "SMS_REJECTED", "REJECT")));
+        m.put("READ", new ArrayList<>(List.of("READ", "MESSAGE_READ", "OPEN", "CLICK")));
+        m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED", "SENT", "MESSAGE_SENT", "SEND", "DELIVERYDELAY")));
         return m;
     }
 
@@ -104,6 +104,10 @@ public class DlrProperties {
             a.put("DOTGO", "RCS");
             a.put("VI", "RCS");
             a.put("AIRTEL", "RCS");
+            a.put("SES", "EMAIL");
+            a.put("AMAZON_SES", "EMAIL");
+            a.put("KENSCIO", "EMAIL");
+            a.put("MAIL", "EMAIL");
             return a;
         }
 

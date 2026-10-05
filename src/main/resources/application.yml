@@ -89,15 +89,19 @@ dlr:
       DOTGO: RCS
       VI: RCS
       AIRTEL: RCS
+      SES: EMAIL
+      AMAZON_SES: EMAIL
+      KENSCIO: EMAIL
+      MAIL: EMAIL
 
   # NORMALIZED_STATUS -> provider statuses (case-insensitive). Unlisted -> UNKNOWN.
   status-mapping:
-    DELIVERED: [DELIVRD, DELIVERED, SMS_DELIVERED, MESSAGE_DELIVERED]
-    FAILED: [UNDELIV, FAILED, SMS_FAILED, MESSAGE_FAILED, INTERNAL_ERROR]
+    DELIVERED: [DELIVRD, DELIVERED, SMS_DELIVERED, MESSAGE_DELIVERED, DELIVERY, DELIVER]
+    FAILED: [UNDELIV, FAILED, SMS_FAILED, MESSAGE_FAILED, INTERNAL_ERROR, BOUNCE]
     EXPIRED: [EXPIRED, SMS_EXPIRED]
-    REJECTED: [REJECTD, REJECTED, SMS_REJECTED]
-    READ: [READ, MESSAGE_READ]       # WhatsApp (Meta) / RCS
-    SENT: [SMS_SENT, SUBMITTED, SENT, MESSAGE_SENT]
+    REJECTED: [REJECTD, REJECTED, SMS_REJECTED, REJECT]
+    READ: [READ, MESSAGE_READ, OPEN, CLICK]   # WhatsApp / RCS read, email open or click
+    SENT: [SMS_SENT, SUBMITTED, SENT, MESSAGE_SENT, SEND, DELIVERYDELAY]
 
   # Optional per-provider overrides, checked before the global mapping:
   # provider-status-mapping:
@@ -137,6 +141,10 @@ dlr:
 
   # RCS DLRs: the Jio, Dotgo, Vi and Airtel operator formats are detected from the payload (or send
   # ?source=RCS / JIO / DOTGO / VI / AIRTEL). The operator is stored in the "service" column.
+
+  # Email DLRs: Amazon SES events (direct or SNS-wrapped) and Kenscio events (single or a list) are detected
+  # from the payload (or send ?source=EMAIL / SES / KENSCIO). Always answered 200. The recipient address is
+  # stored in "mobile" and the provider in "service".
 
   # Meta (WhatsApp Cloud API) webhooks: {"object":"whatsapp_business_account","entry":[...statuses...]}
   # posted to /api/v1/dlr/receive (detected from the payload, or ?source=META). Always answered 200.

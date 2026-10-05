@@ -75,7 +75,7 @@ class DlrProcessingServiceTest {
                 List.of(new DefaultBillingDlrAdapter(AdapterTestSupport.MAPPER, AdapterTestSupport.VALIDATOR, props)),
                 billing, new ShortLinkClickAdapter(AdapterTestSupport.MAPPER, AdapterTestSupport.VALIDATOR, props),
                 new ClickProcessingService(clickRepository = mock(DlrClickRepository.class), tx, metrics),
-                AdapterTestSupport.metaAdapter());
+                AdapterTestSupport.metaAdapter(), AdapterTestSupport.emailAdapter());
     }
 
     private DlrBillingRepository billingRepository;

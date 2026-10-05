@@ -1,0 +1,7 @@
+{
+  "Type": "Notification",
+  "MessageId": "sns-1",
+  "TopicArn": "arn:aws:sns:ap-south-1:123456789012:ses-events",
+  "Message": "{\"eventType\": \"Delivery\", \"mail\": {\"timestamp\": \"2026-07-23T10:15:28.000Z\", \"source\": \"news@brand.example\", \"messageId\": \"0100018f-ses-0001\", \"destination\": [\"asha@example.com\"]}, \"delivery\": {\"timestamp\": \"2026-07-23T10:15:30.000Z\", \"recipients\": [\"asha@example.com\"], \"smtpResponse\": \"250 2.0.0 OK\"}}",
+  "Timestamp": "2026-07-23T10:15:30.500Z"
+}

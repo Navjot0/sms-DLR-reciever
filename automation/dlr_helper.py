@@ -288,6 +288,28 @@ def send_rcs_dlr(message_id: str, status: str = "delivered", operator: str = "ji
     return SimulatedDlr(message_id, response.status_code)
 
 
+def send_email_dlr(message_id: str, event: str = "delivery", to: str = "user@example.com", provider: str = "ses",
+                   sender: str = "noreply@example.com", base_url: str = DLR_BASE_URL,
+                   headers: dict | None = None) -> SimulatedDlr:
+    """Simulates an email DLR. provider "ses": event send / delivery / open / click / bounce / complaint.
+    provider "kenscio": event deliver / open / click / bounce / complaint / unsub (message_id is the xJob hash)."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    ev = event.lower()
+    if provider.lower() == "kenscio":
+        payload = [{"xJob": message_id, "eventType": ev.upper(), "eventTimestamp": now, "address": to}]
+    else:
+        payload = {"eventType": ev.capitalize(),
+                   "mail": {"timestamp": now, "source": sender, "messageId": message_id, "destination": [to]}}
+        if ev == "bounce":
+            payload["bounce"] = {"bounceType": "Permanent", "bounceSubType": "General", "timestamp": now,
+                                 "bouncedRecipients": [{"emailAddress": to, "status": "5.1.1",
+                                                        "diagnosticCode": "smtp; 550 5.1.1 user unknown"}]}
+        else:
+            payload[ev] = {"timestamp": now, "recipients": [to]}
+    response = _session.post(f"{base_url}/api/v1/dlr/receive", json=payload, headers=headers or {}, timeout=10)
+    return SimulatedDlr(message_id, response.status_code)
+
+
 def send_billing_dlr(message_id: str, parts: int = 1, amount_per_part: str = "1", currency: str = "INR",
                      transaction_type: str = "debit", product: str = "SMS Transactional",
                      base_url: str = DLR_BASE_URL, headers: dict | None = None) -> SimulatedDlr:

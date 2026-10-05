@@ -42,6 +42,10 @@ final class AdapterTestSupport {
         return new com.smsframework.dlr.rcs.RcsDlrAdapter(NORMALIZER, MAPPER, PROPS);
     }
 
+    static com.smsframework.dlr.email.EmailDlrAdapter emailAdapter() {
+        return new com.smsframework.dlr.email.EmailDlrAdapter(NORMALIZER, MAPPER, PROPS);
+    }
+
     static JsonNode json(String s) {
         try {
             return MAPPER.readTree(s);

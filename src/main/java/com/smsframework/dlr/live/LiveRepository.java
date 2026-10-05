@@ -73,8 +73,9 @@ public class LiveRepository {
     static final String WEBENGAGE = "WEBENGAGE";
     static final String META = "META";
     static final String RCS = "RCS";
+    static final String EMAIL = "EMAIL";
     /** Channels with several statuses per message (sent, delivered, read): counted per message. */
-    private static final java.util.Set<String> PER_MESSAGE = java.util.Set.of(META, RCS);
+    private static final java.util.Set<String> PER_MESSAGE = java.util.Set.of(META, RCS, EMAIL);
     static final String SHORT_URL = "SHORT_URL";
     private static final String ACCEPTED = "processing_status IN ('APPLIED', 'IGNORED')";
 
@@ -92,6 +93,7 @@ public class LiveRepository {
         status.put(WEBENGAGE, new LinkedHashMap<>());
         status.put(META, new LinkedHashMap<>());
         status.put(RCS, new LinkedHashMap<>());
+        status.put(EMAIL, new LinkedHashMap<>());
         jdbc.query("SELECT source, normalized_status, count(*) FROM dlr_events WHERE " + ACCEPTED + " AND " + window
                 + " GROUP BY 1, 2", p, rs -> {
             status.computeIfAbsent(rs.getString(1), k -> new LinkedHashMap<>())
@@ -144,9 +146,15 @@ public class LiveRepository {
                 dlrs = m[0]; delivered = m[1]; read = m[2]; failed = m[3]; rejected = m[4];
                 pending = dlrs - delivered - failed - rejected;
             }
+            long clicked = 0;       // email: messages with at least one click event
+            if (EMAIL.equals(e.getKey())) {
+                Long c = jdbc.queryForObject("SELECT count(DISTINCT message_id) FROM dlr_events WHERE source = 'EMAIL' "
+                        + "AND upper(provider_status) = 'CLICK' AND " + ACCEPTED + " AND " + window, p, Long.class);
+                clicked = c == null ? 0 : c;
+            }
             Object[] b = billing.getOrDefault(e.getKey(), new Object[]{0L, BigDecimal.ZERO, null});
             categories.add(new LiveStatsResponse.Category(e.getKey(), label(e.getKey()), dlrs, delivered, read, failed,
-                    rejected, pending, (Long) b[0], plain((BigDecimal) b[1]), (String) b[2], 0, 0, 0));
+                    rejected, pending, (Long) b[0], plain((BigDecimal) b[1]), (String) b[2], clicked, 0, 0));
             tDlrs += dlrs; tDel += delivered; tRead += read; tFail += failed; tRej += rejected; tPend += pending;
         }
         for (Object[] b : billing.values()) {
@@ -178,15 +186,15 @@ public class LiveRepository {
         jdbc.query("SELECT date_trunc('" + unit + "', created_at), source, count(*) FROM dlr_events WHERE " + ACCEPTED
                 + " AND " + chartWindow + " GROUP BY 1, 2", cp, rs -> {
             String src = rs.getString(2);
-            int slot = WEBENGAGE.equals(src) ? 1 : META.equals(src) ? 2 : RCS.equals(src) ? 4 : 0;
-            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[5])[slot] += rs.getLong(3);
+            int slot = WEBENGAGE.equals(src) ? 1 : META.equals(src) ? 2 : RCS.equals(src) ? 4 : EMAIL.equals(src) ? 5 : 0;
+            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[6])[slot] += rs.getLong(3);
         });
         jdbc.query("SELECT date_trunc('" + unit + "', created_at), count(*) FROM dlr_click_events "
                 + "WHERE processing_status = 'APPLIED' AND " + chartWindow + " GROUP BY 1", cp, rs -> {
-            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[5])[3] += rs.getLong(2);
+            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[6])[3] += rs.getLong(2);
         });
         List<LiveStatsResponse.Bucket> series = new ArrayList<>();
-        buckets.forEach((t, c) -> series.add(new LiveStatsResponse.Bucket(t, c[0], c[1], c[2], c[3], c[4])));
+        buckets.forEach((t, c) -> series.add(new LiveStatsResponse.Bucket(t, c[0], c[1], c[2], c[3], c[4], c[5])));
 
         OffsetDateTime now = jdbc.getJdbcTemplate().queryForObject("SELECT now()", OffsetDateTime.class);
         return new LiveStatsResponse(minutes, minutes > 0 ? now.minusMinutes(minutes) : null, now, totals, categories,
@@ -199,6 +207,7 @@ public class LiveRepository {
             case WEBENGAGE -> "WebEngage";
             case META -> "Meta WhatsApp";
             case RCS -> "RCS";
+            case EMAIL -> "Email";
             case SHORT_URL -> "Short URL";
             default -> key;
         };

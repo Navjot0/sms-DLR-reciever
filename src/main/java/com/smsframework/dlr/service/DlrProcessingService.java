@@ -22,6 +22,7 @@ import com.smsframework.dlr.entity.DlrMessageStatus;
 import com.smsframework.dlr.exception.DlrPersistenceException;
 import com.smsframework.dlr.exception.DlrValidationException;
 import com.smsframework.dlr.mapper.DlrMapper;
+import com.smsframework.dlr.email.EmailDlrAdapter;
 import com.smsframework.dlr.meta.MetaWebhookResult;
 import com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter;
 import com.smsframework.dlr.repository.DlrEventRepository;
@@ -96,6 +97,7 @@ public class DlrProcessingService {
     private final ShortLinkClickAdapter clickAdapter;
     private final ClickProcessingService clickService;
     private final MetaWhatsAppDlrAdapter metaAdapter;
+    private final EmailDlrAdapter emailAdapter;
 
     public DlrProcessingService(DlrAdapterRegistry adapters, SourceResolver sourceResolver,
                                 DedupKeyGenerator dedupKeyGenerator, DlrStateMachine stateMachine,
@@ -103,8 +105,10 @@ public class DlrProcessingService {
                                 DlrMetrics metrics, TransactionTemplate tx, ObjectMapper objectMapper,
                                 DlrProperties properties, List<BillingDlrAdapter> billingAdapters,
                                 BillingProcessingService billingService, ShortLinkClickAdapter clickAdapter,
-                                ClickProcessingService clickService, MetaWhatsAppDlrAdapter metaAdapter) {
+                                ClickProcessingService clickService, MetaWhatsAppDlrAdapter metaAdapter,
+                                EmailDlrAdapter emailAdapter) {
         this.metaAdapter = metaAdapter;
+        this.emailAdapter = emailAdapter;
         this.clickAdapter = clickAdapter;
         this.clickService = clickService;
         this.billingAdapters = List.copyOf(billingAdapters);
@@ -192,6 +196,18 @@ public class DlrProcessingService {
         if ((explicitSource == null || MetaWhatsAppDlrAdapter.SOURCE.equalsIgnoreCase(explicitSource))
                 && metaAdapter.isWebhook(json)) {
             return processMetaWebhook(json);
+        }
+
+        // 3a". Email (Amazon SES / SNS, Kenscio): one callback may carry several events ------------------
+        if ((explicitSource == null || EmailDlrAdapter.SOURCE.equalsIgnoreCase(explicitSource))
+                && emailAdapter.isEmailPayload(json)) {
+            List<JsonNode> emailEvents = emailAdapter.events(json);
+            if (emailEvents.isEmpty()) {
+                String note = emailAdapter.nonEventNote(json);
+                log.info("Email callback without events acknowledged: {}", note);
+                return metaResult(new MetaWebhookResult(EmailDlrAdapter.SOURCE, 0, 0, 0, 0, 0, note, List.of()));
+            }
+            return processBatch(emailAdapter, emailEvents, "email: ");
         }
 
         // 3b. Billing DLR ({"event_type":"billing","events":[...]}) -----------------------------------
@@ -295,16 +311,26 @@ public class DlrProcessingService {
             log.info("Meta webhook without statuses acknowledged: {}", note);
             return metaResult(new MetaWebhookResult(source, 0, 0, 0, 0, 0, note, List.of()));
         }
+        return processBatch(metaAdapter, envelopes, "meta: ");
+    }
+
+    /**
+     * Several DLRs in one callback (Meta statuses, email events): each is validated, de-duplicated and run
+     * through the state machine on its own, and stored with its own raw JSON. Answered with 200 as a whole.
+     */
+    private ProcessingResult processBatch(DlrProviderAdapter adapter, List<? extends JsonNode> envelopes,
+                                          String rejectPrefix) {
+        String source = adapter.source();
         int applied = 0, ignored = 0, duplicates = 0, rejected = 0;
         List<MetaWebhookResult.Item> items = new java.util.ArrayList<>(envelopes.size());
-        for (ObjectNode env : envelopes) {
+        for (JsonNode env : envelopes) {
             String raw = env.toString();
             ProcessingResult r;
             NormalizedDlr dlr = null;
             try {
-                dlr = metaAdapter.normalize(env);
+                dlr = adapter.normalize(env);
             } catch (DlrValidationException e) {
-                r = reject(source, safePeek(metaAdapter, env), raw, "meta: " + e.getReason(), false);
+                r = reject(source, safePeek(adapter, env), raw, rejectPrefix + e.getReason(), false);
                 rejected++;
                 items.add(new MetaWebhookResult.Item(r.eventId(), r.messageId(), null, null,
                         ProcessingStatus.REJECTED.name(), null, e.getReason()));

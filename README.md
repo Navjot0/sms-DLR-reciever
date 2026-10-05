@@ -24,6 +24,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [Short-link click events](#short-link-click-events)
 - [Meta WhatsApp DLRs](#meta-whatsapp-dlrs)
 - [RCS DLRs](#rcs-dlrs)
+- [Email DLRs](#email-dlrs)
 - [Database](#database)
 - [Security](#security)
 - [Logging](#logging)
@@ -591,6 +592,29 @@ RCS delivery reports are posted to the same `POST /api/v1/dlr/receive`, in the o
 - **Dotgo** wraps the event as base64 JSON in a Pub/Sub push envelope. If `message.data` cannot be decoded, the DLR is stored as `REJECTED`.
 - **Live UI:** an **RCS** card that counts messages (Delivered including read, Read, Failed, Rejected, Sent/pending), an RCS series in the chart and an RCS filter in the live feed. The feed's Details column shows the operator.
 - **Automation:** `dlr_helper.send_rcs_dlr(message_id, status="delivered", operator="jio" | "dotgo" | "vi" | "airtel")`.
+
+---
+
+## Email DLRs
+
+Email delivery reports are posted to the same `POST /api/v1/dlr/receive`, in the provider's own format. Two providers are supported, the same ones the platform's mail package consumes: **Amazon SES** and **Kenscio**. The provider is detected from the payload, or you can send `?source=EMAIL` (aliases `SES`, `AMAZON_SES`, `KENSCIO`, `MAIL`). All are stored with source `EMAIL`, with the provider in the `service` column. Samples: `samples/email-ses-delivery.json`, `email-ses-bounce.json`, `email-ses-sns-notification.json`, `email-kenscio.json`.
+
+| | Amazon SES | Kenscio |
+|---|---|---|
+| Shape | One event object, or the same event wrapped by SNS (`{"Type":"Notification","Message":"<json>"}`) | One event object or a list of events |
+| Message id | `mail.messageId` | `xJob` / `x-job` (the message hash) |
+| Event | `eventType` (or `notificationType`): `Send`, `Delivery`, `Open`, `Click`, `Bounce`, `Complaint`, `Reject`, `DeliveryDelay` | `eventType` / `event-type`: `DELIVER`, `OPEN`, `CLICK`, `BOUNCE`, `COMPLAINT`, `UNSUB` |
+| Recipient | bounced / delivered recipient, else `mail.destination[0]` | `address` |
+| Time | the event's own `timestamp`, else `mail.timestamp` | `eventTimestamp` / `event-timestamp` |
+| Sender | `mail.source` | – |
+| Bounce details | recipient `status` (e.g. `5.1.1`) and `diagnosticCode`, else bounce type and sub-type | – |
+
+- **Statuses:** Send → `SENT`, Delivery / DELIVER → `DELIVERED`, Open and Click → `READ` (opened), Bounce → `FAILED`, Reject → `REJECTED`. Complaint and Unsubscribe are stored as events with status `UNKNOWN`; they do not change the state of a delivered message. The original event name is always kept in `provider_status`.
+- **Recipient address** is stored in the `mobile` column, which migration `V9` widens to 320 characters.
+- **Several events per callback** (a Kenscio list) are each stored as their own row. The callback is always answered with 200, and invalid events are stored as `REJECTED`.
+- **SNS subscription:** a `SubscriptionConfirmation` is acknowledged and not stored. The receiver does not open the `SubscribeURL` itself; it returns it in the response and logs it so you can confirm the subscription once.
+- **Live UI:** an **Email** card that counts messages (Delivered including opened, Opened, Clicked, Bounced, Rejected, Sent/pending), an Email series in the chart and an Email filter in the live feed.
+- **Automation:** `dlr_helper.send_email_dlr(message_id, event="delivery", to="user@example.com", provider="ses" | "kenscio")`.
 
 ---
 

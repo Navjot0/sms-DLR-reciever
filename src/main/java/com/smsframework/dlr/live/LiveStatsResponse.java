@@ -26,7 +26,8 @@ public record LiveStatsResponse(
 
     /**
      * One category card. For DEFAULT_SMS / WEBENGAGE the DLR fields are filled; for SHORT_URL the click fields.
-     * META and RCS count messages, not callbacks: dlrs = messages, delivered = delivered or read, read = read.
+     * META, RCS and EMAIL count messages, not callbacks: dlrs = messages, delivered = delivered or read, read = read
+     * (email: opened). EMAIL also fills clicks = messages with a click event.
      */
     public record Category(String key, String label,
                            long dlrs, long delivered, long read, long failed, long rejected, long pending,
@@ -34,6 +35,6 @@ public record LiveStatsResponse(
                            long clicks, long clickedMessages, long links) {
     }
 
-    public record Bucket(OffsetDateTime time, long defaultSms, long webengage, long meta, long shortUrl, long rcs) {
+    public record Bucket(OffsetDateTime time, long defaultSms, long webengage, long meta, long shortUrl, long rcs, long email) {
     }
 }

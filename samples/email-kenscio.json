@@ -1,0 +1,20 @@
+[
+  {
+    "xJob": "a3f9c2d1e4b5",
+    "eventType": "DELIVER",
+    "eventTimestamp": "2026-07-23T10:15:30Z",
+    "address": "asha@example.com"
+  },
+  {
+    "xJob": "a3f9c2d1e4b5",
+    "eventType": "OPEN",
+    "eventTimestamp": "2026-07-23T10:16:02Z",
+    "address": "asha@example.com"
+  },
+  {
+    "x-job": "b7e1d0c9a8f6",
+    "event-type": "BOUNCE",
+    "event-timestamp": "2026-07-23T10:15:33Z",
+    "address": "nobody@example.com"
+  }
+]
