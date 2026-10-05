@@ -29,6 +29,8 @@ public record LiveFeedItem(
         String urlKey,
         Integer visitedCount,
         String deviceType,
+        // RCS operator (JIO / DOTGO / VI / AIRTEL), WhatsApp pricing category, SMS service
+        String service,
         // the callback as received (status/click: whole payload; billing: this event)
         @com.fasterxml.jackson.annotation.JsonRawValue String raw) {
 }

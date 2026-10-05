@@ -253,6 +253,41 @@ def send_meta_dlr(message_id: str, status: str = "delivered", recipient_id: str 
     return SimulatedDlr(message_id, response.status_code)
 
 
+def send_rcs_dlr(message_id: str, status: str = "delivered", operator: str = "jio", phone: str = "919000000001",
+                 error_code: str | None = None, error_message: str | None = None,
+                 base_url: str = DLR_BASE_URL, headers: dict | None = None) -> SimulatedDlr:
+    """Simulates an RCS operator DLR. status: sent / delivered / read / failed. operator: jio / dotgo / vi / airtel
+    (Airtel has no "sent" webhook)."""
+    import base64
+    import json as _json
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    st, op = status.lower(), operator.lower()
+    if op == "jio":
+        entity = {"eventType": f"MESSAGE_{st.upper()}", "messageId": message_id, "sendTime": now}
+        if st == "failed":
+            entity["error"] = {"code": error_code, "errCode": None, "message": error_message or "Message delivery failed"}
+        payload = {"entityType": "STATUS_EVENT", "entity": entity, "botId": "bot-test", "userPhoneNumber": phone}
+    elif op == "dotgo":
+        data = {"messageId": message_id, "senderPhoneNumber": phone, "eventType": st.upper(), "sendTime": now}
+        if st == "failed":
+            data["reason"] = error_message or "Dotgo reported message FAILED"
+            if error_code:
+                data["code"] = error_code
+        payload = {"message": {"data": base64.b64encode(_json.dumps(data).encode()).decode(),
+                               "attributes": {"event_type": st.upper(), "business_id": "bot-test"}}}
+    elif op == "vi":
+        payload = {"event": "message_status", "RCSMessage": {"msgId": message_id, "status": st, "timestamp": now},
+                   "messageContact": {"userContact": f"+{phone}"}}
+    elif op == "airtel":
+        payload = {"messageId": message_id, "eventType": st.upper(), "sendTime": now, "agentId": "agent-test"}
+        if st == "failed":
+            payload["error"] = {"message": error_message or "Message delivery failed", "code": error_code}
+    else:
+        raise ValueError(f"unknown RCS operator: {operator}")
+    response = _session.post(f"{base_url}/api/v1/dlr/receive", json=payload, headers=headers or {}, timeout=10)
+    return SimulatedDlr(message_id, response.status_code)
+
+
 def send_billing_dlr(message_id: str, parts: int = 1, amount_per_part: str = "1", currency: str = "INR",
                      transaction_type: str = "debit", product: str = "SMS Transactional",
                      base_url: str = DLR_BASE_URL, headers: dict | None = None) -> SimulatedDlr:

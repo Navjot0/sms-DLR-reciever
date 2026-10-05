@@ -38,6 +38,10 @@ final class AdapterTestSupport {
         return new com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter(NORMALIZER, MAPPER, PROPS);
     }
 
+    static com.smsframework.dlr.rcs.RcsDlrAdapter rcsAdapter() {
+        return new com.smsframework.dlr.rcs.RcsDlrAdapter(NORMALIZER, MAPPER, PROPS);
+    }
+
     static JsonNode json(String s) {
         try {
             return MAPPER.readTree(s);

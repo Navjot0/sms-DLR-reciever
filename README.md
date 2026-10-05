@@ -23,6 +23,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [Billing DLRs](#billing-dlrs)
 - [Short-link click events](#short-link-click-events)
 - [Meta WhatsApp DLRs](#meta-whatsapp-dlrs)
+- [RCS DLRs](#rcs-dlrs)
 - [Database](#database)
 - [Security](#security)
 - [Logging](#logging)
@@ -571,6 +572,25 @@ Meta (WhatsApp Cloud API) status webhooks are posted to the same `POST /api/v1/d
 - **Signature:** Meta signs with `X-Hub-Signature-256: sha256=<hex>`. To check it, set `DLR_HMAC_ENABLED=true`, `dlr.security.hmac.header-name=X-Hub-Signature-256` and `DLR_HMAC_SECRET=<app secret>`. HMAC applies to every callback, so only enable it if all senders sign.
 - **Live UI:** a **Meta WhatsApp** card (Delivered, Read, Failed, Rejected, Sent/pending), a Meta series in the chart, a Meta filter in the live feed, and a **Read** tile.
 - **Automation:** `dlr_helper.send_meta_dlr(message_id, status="delivered" | "read" | "sent" | "failed", …)` simulates a webhook. `wait_for_dlr` and `verify_dlrs` use that `message_id`.
+
+---
+
+## RCS DLRs
+
+RCS delivery reports are posted to the same `POST /api/v1/dlr/receive`, in the operator's own wire format. Four formats are supported: the same ones the RCS Simulator sends. The operator is detected from the payload, so no header is needed. You can also send `?source=RCS` (aliases `JIO`, `DOTGO`, `VI`, `AIRTEL`). All of them are stored with source `RCS`, and the operator goes in the `service` column. Samples: `samples/rcs-jio.json`, `rcs-dotgo.json`, `rcs-vi.json`, `rcs-airtel.json`.
+
+| Operator | Detected by | Message id | Status | Phone | Time | Error |
+|---|---|---|---|---|---|---|
+| Jio | `entityType` + `entity` | `entity.messageId` | `entity.eventType` (`MESSAGE_SENT`, `MESSAGE_DELIVERED`, `MESSAGE_READ`, `MESSAGE_FAILED`) | `userPhoneNumber` | `entity.sendTime` | `entity.error.code` / `message` |
+| Dotgo | `message.data` (base64 JSON) | `messageId` | `eventType` (`SENT`, `DELIVERED`, `READ`, `FAILED`) | `senderPhoneNumber` | `sendTime` | `code` / `reason` |
+| Vi | `RCSMessage` | `RCSMessage.msgId` | `RCSMessage.status` (`sent`, `delivered`, `read`, `failed`) | `messageContact.userContact` | `RCSMessage.timestamp` | – |
+| Airtel | flat `messageId` + `eventType` | `messageId` | `eventType` (`DELIVERED`, `READ`, `FAILED`, `INTERNAL_ERROR`) | – | `sendTime` | `error.code` / `message` |
+
+- **Statuses** normalize to `SENT`, `DELIVERED`, `READ` and `FAILED`, with the same state machine as WhatsApp: `SENT → DELIVERED → READ`. Airtel has no "sent" webhook.
+- **Sender:** the Jio `botId`, Dotgo `business_id` or Airtel `agentId` is stored as `sender`. A leading `+` is removed from the phone number.
+- **Dotgo** wraps the event as base64 JSON in a Pub/Sub push envelope. If `message.data` cannot be decoded, the DLR is stored as `REJECTED`.
+- **Live UI:** an **RCS** card that counts messages (Delivered including read, Read, Failed, Rejected, Sent/pending), an RCS series in the chart and an RCS filter in the live feed. The feed's Details column shows the operator.
+- **Automation:** `dlr_helper.send_rcs_dlr(message_id, status="delivered", operator="jio" | "dotgo" | "vi" | "airtel")`.
 
 ---
 

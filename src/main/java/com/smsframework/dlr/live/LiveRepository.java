@@ -34,13 +34,13 @@ public class LiveRepository {
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, mobile, provider_status,
                        normalized_status, processing_status, coalesce(rejection_reason, processing_note) AS note,
-                       raw_payload::text AS raw
+                       raw_payload::text AS raw, service
                 FROM dlr_events WHERE id > :as AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "STATUS", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("mobile"), rs.getString("provider_status"), rs.getString("normalized_status"),
                 rs.getString("processing_status"), rs.getString("note"),
-                null, null, null, null, null, null, null, rs.getString("raw"))));
+                null, null, null, null, null, null, null, rs.getString("service"), rs.getString("raw"))));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, billing_message_id, part_number, processing_status,
                        coalesce(rejection_reason, processing_note) AS note, transaction_type, units, total_amount, currency,
@@ -50,7 +50,7 @@ public class LiveRepository {
                 rs.getString("message_id"), rs.getString("billing_message_id"), integer(rs, "part_number"), null,
                 null, null, rs.getString("processing_status"), rs.getString("note"),
                 rs.getString("transaction_type"), integer(rs, "units"), plain(rs.getBigDecimal("total_amount")),
-                rs.getString("currency"), null, null, null, rs.getString("raw"))));
+                rs.getString("currency"), null, null, null, null, rs.getString("raw"))));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, contact, processing_status,
                        processing_note, url_key, visited_count, device_type, raw_payload::text AS raw
@@ -59,7 +59,7 @@ public class LiveRepository {
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("contact"), null, null, rs.getString("processing_status"), rs.getString("processing_note"),
                 null, null, null, null, rs.getString("url_key"), integer(rs, "visited_count"),
-                rs.getString("device_type"), rs.getString("raw"))));
+                rs.getString("device_type"), null, rs.getString("raw"))));
         items.sort(Comparator.comparing(LiveFeedItem::createdAt).thenComparing(LiveFeedItem::id).reversed());
         return items.size() > limit ? items.subList(0, limit) : items;
     }
@@ -72,6 +72,9 @@ public class LiveRepository {
     static final String DEFAULT_SMS = "DEFAULT_SMS";
     static final String WEBENGAGE = "WEBENGAGE";
     static final String META = "META";
+    static final String RCS = "RCS";
+    /** Channels with several statuses per message (sent, delivered, read): counted per message. */
+    private static final java.util.Set<String> PER_MESSAGE = java.util.Set.of(META, RCS);
     static final String SHORT_URL = "SHORT_URL";
     private static final String ACCEPTED = "processing_status IN ('APPLIED', 'IGNORED')";
 
@@ -88,6 +91,7 @@ public class LiveRepository {
         status.put(DEFAULT_SMS, new LinkedHashMap<>());
         status.put(WEBENGAGE, new LinkedHashMap<>());
         status.put(META, new LinkedHashMap<>());
+        status.put(RCS, new LinkedHashMap<>());
         jdbc.query("SELECT source, normalized_status, count(*) FROM dlr_events WHERE " + ACCEPTED + " AND " + window
                 + " GROUP BY 1, 2", p, rs -> {
             status.computeIfAbsent(rs.getString(1), k -> new LinkedHashMap<>())
@@ -122,8 +126,8 @@ public class LiveRepository {
             long rejected = by.getOrDefault("REJECTED", 0L);
             long read = by.getOrDefault("READ", 0L);
             long pending = dlrs - delivered - read - failed - rejected;      // SENT / UNKNOWN
-            if (META.equals(e.getKey())) {
-                // WhatsApp sends several statuses per message (sent, delivered, read), and often "read" with no
+            if (PER_MESSAGE.contains(e.getKey())) {
+                // WhatsApp and RCS send several statuses per message (sent, delivered, read), and often "read" with no
                 // "delivered" before it. Count MESSAGES by how far each one got, so Delivered >= Read always holds:
                 // delivered = reached the handset (delivered or read), read = read.
                 long[] m = jdbc.queryForObject("""
@@ -134,8 +138,8 @@ public class LiveRepository {
                                      bool_or(normalized_status = 'DELIVERED') AS dl,
                                      bool_or(normalized_status IN ('FAILED', 'EXPIRED')) AS fl,
                                      bool_or(normalized_status = 'REJECTED') AS rj
-                              FROM dlr_events WHERE source = 'META' AND\s""" + ACCEPTED + " AND " + window
-                        + " GROUP BY message_id) t", p,
+                              FROM dlr_events WHERE source = :src AND\s""" + ACCEPTED + " AND " + window
+                        + " GROUP BY message_id) t", new MapSqlParameterSource("m", minutes).addValue("src", e.getKey()),
                         (rs, n) -> new long[]{rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4), rs.getLong(5)});
                 dlrs = m[0]; delivered = m[1]; read = m[2]; failed = m[3]; rejected = m[4];
                 pending = dlrs - delivered - failed - rejected;
@@ -173,15 +177,16 @@ public class LiveRepository {
         TreeMap<OffsetDateTime, long[]> buckets = new TreeMap<>();
         jdbc.query("SELECT date_trunc('" + unit + "', created_at), source, count(*) FROM dlr_events WHERE " + ACCEPTED
                 + " AND " + chartWindow + " GROUP BY 1, 2", cp, rs -> {
-            int slot = WEBENGAGE.equals(rs.getString(2)) ? 1 : META.equals(rs.getString(2)) ? 2 : 0;
-            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[4])[slot] += rs.getLong(3);
+            String src = rs.getString(2);
+            int slot = WEBENGAGE.equals(src) ? 1 : META.equals(src) ? 2 : RCS.equals(src) ? 4 : 0;
+            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[5])[slot] += rs.getLong(3);
         });
         jdbc.query("SELECT date_trunc('" + unit + "', created_at), count(*) FROM dlr_click_events "
                 + "WHERE processing_status = 'APPLIED' AND " + chartWindow + " GROUP BY 1", cp, rs -> {
-            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[4])[3] += rs.getLong(2);
+            buckets.computeIfAbsent(rs.getObject(1, OffsetDateTime.class), k -> new long[5])[3] += rs.getLong(2);
         });
         List<LiveStatsResponse.Bucket> series = new ArrayList<>();
-        buckets.forEach((t, c) -> series.add(new LiveStatsResponse.Bucket(t, c[0], c[1], c[2], c[3])));
+        buckets.forEach((t, c) -> series.add(new LiveStatsResponse.Bucket(t, c[0], c[1], c[2], c[3], c[4])));
 
         OffsetDateTime now = jdbc.getJdbcTemplate().queryForObject("SELECT now()", OffsetDateTime.class);
         return new LiveStatsResponse(minutes, minutes > 0 ? now.minusMinutes(minutes) : null, now, totals, categories,
@@ -193,6 +198,7 @@ public class LiveRepository {
             case DEFAULT_SMS -> "Default SMS";
             case WEBENGAGE -> "WebEngage";
             case META -> "Meta WhatsApp";
+            case RCS -> "RCS";
             case SHORT_URL -> "Short URL";
             default -> key;
         };

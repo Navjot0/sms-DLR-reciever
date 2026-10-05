@@ -1,0 +1,10 @@
+{
+  "messageId": "SIM4a7a9e0100000004",
+  "eventType": "FAILED",
+  "sendTime": "2026-07-23T10:15:30Z",
+  "agentId": "agent-001",
+  "error": {
+    "message": "Message delivery failed",
+    "code": "NETWORK_FAILURE"
+  }
+}

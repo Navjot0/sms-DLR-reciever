@@ -55,12 +55,12 @@ public class DlrProperties {
 
     public static Map<String, List<String>> defaultStatusMapping() {
         Map<String, List<String>> m = new LinkedHashMap<>();
-        m.put("DELIVERED", new ArrayList<>(List.of("DELIVRD", "DELIVERED", "SMS_DELIVERED")));
-        m.put("FAILED", new ArrayList<>(List.of("UNDELIV", "FAILED", "SMS_FAILED")));
+        m.put("DELIVERED", new ArrayList<>(List.of("DELIVRD", "DELIVERED", "SMS_DELIVERED", "MESSAGE_DELIVERED")));
+        m.put("FAILED", new ArrayList<>(List.of("UNDELIV", "FAILED", "SMS_FAILED", "MESSAGE_FAILED", "INTERNAL_ERROR")));
         m.put("EXPIRED", new ArrayList<>(List.of("EXPIRED", "SMS_EXPIRED")));
         m.put("REJECTED", new ArrayList<>(List.of("REJECTD", "REJECTED", "SMS_REJECTED")));
-        m.put("READ", new ArrayList<>(List.of("READ")));
-        m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED", "SENT")));
+        m.put("READ", new ArrayList<>(List.of("READ", "MESSAGE_READ")));
+        m.put("SENT", new ArrayList<>(List.of("SMS_SENT", "SUBMITTED", "SENT", "MESSAGE_SENT")));
         return m;
     }
 
@@ -89,14 +89,23 @@ public class DlrProperties {
         /** If no explicit source is supplied, ask each adapter whether it recognises the payload structure. */
         private boolean detectFromPayload = true;
         /** Alias -> canonical source, e.g. WE -> WEBENGAGE. Keys are case-insensitive. */
-        private Map<String, String> aliases = new LinkedHashMap<>(Map.of(
-                "DEFAULT", "DEFAULT_SMS",
-                "SMS", "DEFAULT_SMS",
-                "WE", "WEBENGAGE",
-                "WEB_ENGAGE", "WEBENGAGE",
-                "WHATSAPP", "META",
-                "WA", "META",
-                "META_WHATSAPP", "META"));
+        private Map<String, String> aliases = defaultAliases();
+
+        private static Map<String, String> defaultAliases() {
+            Map<String, String> a = new LinkedHashMap<>();
+            a.put("DEFAULT", "DEFAULT_SMS");
+            a.put("SMS", "DEFAULT_SMS");
+            a.put("WE", "WEBENGAGE");
+            a.put("WEB_ENGAGE", "WEBENGAGE");
+            a.put("WHATSAPP", "META");
+            a.put("WA", "META");
+            a.put("META_WHATSAPP", "META");
+            a.put("JIO", "RCS");
+            a.put("DOTGO", "RCS");
+            a.put("VI", "RCS");
+            a.put("AIRTEL", "RCS");
+            return a;
+        }
 
         public List<String> getHeaders() { return headers; }
         public void setHeaders(List<String> headers) { this.headers = headers; }

@@ -1,0 +1,10 @@
+{
+  "entityType": "STATUS_EVENT",
+  "entity": {
+    "eventType": "MESSAGE_DELIVERED",
+    "messageId": "SIM4a7a9e0100000001",
+    "sendTime": "2026-07-23T10:15:30Z"
+  },
+  "botId": "bot-001",
+  "userPhoneNumber": "919876543210"
+}

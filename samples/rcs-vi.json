@@ -1,0 +1,11 @@
+{
+  "event": "message_status",
+  "RCSMessage": {
+    "msgId": "SIM4a7a9e0100000003",
+    "status": "read",
+    "timestamp": "2026-07-23T10:15:30Z"
+  },
+  "messageContact": {
+    "userContact": "+919876543210"
+  }
+}
