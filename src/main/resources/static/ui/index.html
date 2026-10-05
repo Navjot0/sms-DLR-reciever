@@ -318,7 +318,7 @@
   function renderTiles() {
     const t = stats.totals || {};
     const tiles = [
-      ["Total DLRs", n0(t.dlrs), "", "status DLRs received"],
+      ["Total DLRs", n0(t.dlrs), "", "SMS DLRs + WhatsApp messages"],
       ["Delivered", n0(t.delivered), "good", pct(t.delivered, t.dlrs)],
       ["Read", n0(t.read), "good", "WhatsApp read receipts"],
       ["Failed", n0(t.failed), "bad", pct(t.failed, t.dlrs) + " · incl. expired"],
@@ -346,16 +346,16 @@
     const total = c.dlrs || 0;
     const seg = (v, col) => v ? `<span style="width:${100 * v / total}%;background:${col}" title=""></span>` : "";
     const meta = c.key === "META";
-    return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">${n0(total)} DLRs</span></h3><div class="nums">`
-      + num("Delivered", n0(c.delivered), pct(c.delivered, total), "var(--good)")
+    return `<div class="cat" style="--cc:${color}"><h3>${esc(c.label)} <span class="muted">${n0(total)} ${meta ? "messages" : "DLRs"}</span></h3><div class="nums">`
+      + num("Delivered", n0(c.delivered), pct(c.delivered, total) + (meta ? " · incl. read" : ""), "var(--good)")
       + (meta ? num("Read", n0(c.read), pct(c.read, total), "var(--good-ink)") : "")
       + num("Failed", n0(c.failed), pct(c.failed, total), "var(--critical)")
       + num("Rejected", n0(c.rejected), pct(c.rejected, total), "var(--serious)")
       + num("Sent / pending", n0(c.pending), pct(c.pending, total), "var(--warning)")
       + (meta ? "" : num("Billing", n0(c.billing_events), money(c.billed_amount, c.billed_currency)))
-      + num("Total DLRs", n0(total))
+      + num(meta ? "Total messages" : "Total DLRs", n0(total))
       + `</div>${total ? `<div class="meter" role="img" aria-label="Delivered ${c.delivered}, read ${c.read || 0}, failed ${c.failed}, rejected ${c.rejected}, pending ${c.pending}">`
-      + seg(c.delivered, "var(--good)") + seg(c.read, "var(--good-ink)") + seg(c.failed, "var(--critical)") + seg(c.rejected, "var(--serious)") + seg(c.pending, "var(--warning)")
+      + seg(meta ? c.delivered - c.read : c.delivered, "var(--good)") + seg(c.read, "var(--good-ink)") + seg(c.failed, "var(--critical)") + seg(c.rejected, "var(--serious)") + seg(c.pending, "var(--warning)")
       + `</div>` : ""}</div>`;
   }
 

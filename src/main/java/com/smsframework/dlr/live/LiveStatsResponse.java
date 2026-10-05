@@ -26,6 +26,7 @@ public record LiveStatsResponse(
 
     /**
      * One category card. For DEFAULT_SMS / WEBENGAGE the DLR fields are filled; for SHORT_URL the click fields.
+     * META counts messages, not callbacks: dlrs = messages, delivered = delivered or read, read = read.
      */
     public record Category(String key, String label,
                            long dlrs, long delivered, long read, long failed, long rejected, long pending,

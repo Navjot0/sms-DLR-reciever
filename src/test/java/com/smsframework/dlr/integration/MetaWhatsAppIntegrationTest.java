@@ -93,9 +93,14 @@ class MetaWhatsAppIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void liveStatsHaveAMetaCategory() {
-        postDlr(webhook(status("wamid.S1", "delivered", 1727780000, "919000000011"),
+        // S1: sent > delivered. S2: read only (Meta often skips "delivered"). S3: sent only. S4: sent > delivered > read.
+        postDlr(webhook(status("wamid.S1", "sent", 1727780000, "919000000011"),
+                status("wamid.S1", "delivered", 1727780001, "919000000011"),
                 status("wamid.S2", "read", 1727780000, "919000000012"),
-                status("wamid.S3", "sent", 1727780000, "919000000013")), Map.of());
+                status("wamid.S3", "sent", 1727780000, "919000000013"),
+                status("wamid.S4", "sent", 1727780000, "919000000014"),
+                status("wamid.S4", "delivered", 1727780001, "919000000014"),
+                status("wamid.S4", "read", 1727780002, "919000000014")), Map.of());
         JsonNode stats = getJson("/api/v1/dlr/live/stats?minutes=60");
         JsonNode meta = null;
         for (JsonNode c : stats.get("categories")) {
@@ -105,15 +110,16 @@ class MetaWhatsAppIntegrationTest extends AbstractIntegrationTest {
         }
         assertThat(meta).isNotNull();
         assertThat(meta.get("label").asText()).isEqualTo("Meta WhatsApp");
-        assertThat(meta.get("dlrs").asLong()).isEqualTo(3);
-        assertThat(meta.get("delivered").asLong()).isEqualTo(1);
-        assertThat(meta.get("read").asLong()).isEqualTo(1);
+        // messages, not callbacks: 4 messages, 3 reached the handset (delivered or read), 2 read, 1 only sent
+        assertThat(meta.get("dlrs").asLong()).isEqualTo(4);
+        assertThat(meta.get("delivered").asLong()).isEqualTo(3);
+        assertThat(meta.get("read").asLong()).isEqualTo(2);
         assertThat(meta.get("pending").asLong()).isEqualTo(1);
-        assertThat(stats.at("/totals/read").asLong()).isEqualTo(1);
+        assertThat(stats.at("/totals/read").asLong()).isEqualTo(2);
         long chart = 0;
         for (JsonNode b : stats.get("series")) {
             chart += b.get("meta").asLong();
         }
-        assertThat(chart).isEqualTo(3);
+        assertThat(chart).isEqualTo(7);   // the chart counts callbacks
     }
 }

@@ -122,6 +122,24 @@ public class LiveRepository {
             long rejected = by.getOrDefault("REJECTED", 0L);
             long read = by.getOrDefault("READ", 0L);
             long pending = dlrs - delivered - read - failed - rejected;      // SENT / UNKNOWN
+            if (META.equals(e.getKey())) {
+                // WhatsApp sends several statuses per message (sent, delivered, read), and often "read" with no
+                // "delivered" before it. Count MESSAGES by how far each one got, so Delivered >= Read always holds:
+                // delivered = reached the handset (delivered or read), read = read.
+                long[] m = jdbc.queryForObject("""
+                        SELECT count(*), count(*) FILTER (WHERE rd OR dl), count(*) FILTER (WHERE rd),
+                               count(*) FILTER (WHERE fl AND NOT (rd OR dl)),
+                               count(*) FILTER (WHERE rj AND NOT (rd OR dl OR fl))
+                        FROM (SELECT bool_or(normalized_status = 'READ') AS rd,
+                                     bool_or(normalized_status = 'DELIVERED') AS dl,
+                                     bool_or(normalized_status IN ('FAILED', 'EXPIRED')) AS fl,
+                                     bool_or(normalized_status = 'REJECTED') AS rj
+                              FROM dlr_events WHERE source = 'META' AND\s""" + ACCEPTED + " AND " + window
+                        + " GROUP BY message_id) t", p,
+                        (rs, n) -> new long[]{rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4), rs.getLong(5)});
+                dlrs = m[0]; delivered = m[1]; read = m[2]; failed = m[3]; rejected = m[4];
+                pending = dlrs - delivered - failed - rejected;
+            }
             Object[] b = billing.getOrDefault(e.getKey(), new Object[]{0L, BigDecimal.ZERO, null});
             categories.add(new LiveStatsResponse.Category(e.getKey(), label(e.getKey()), dlrs, delivered, read, failed,
                     rejected, pending, (Long) b[0], plain((BigDecimal) b[1]), (String) b[2], 0, 0, 0));
