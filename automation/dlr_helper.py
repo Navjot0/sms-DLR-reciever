@@ -233,15 +233,15 @@ def send_webengage_dlr(message_id: str, status: str = "sms_sent", to_number: str
     return SimulatedDlr(message_id, response.status_code)
 
 
-def send_meta_dlr(wamid: str, status: str = "delivered", recipient_id: str = "919000000001",
+def send_meta_dlr(message_id: str, status: str = "delivered", recipient_id: str = "919000000001",
                   timestamp: int | None = None, error_code: int | None = None, error_title: str | None = None,
-                  callback_data: str | None = None, message_id: str | None = None, base_url: str = DLR_BASE_URL,
+                  callback_data: str | None = None, wamid: str | None = None, base_url: str = DLR_BASE_URL,
                   headers: dict | None = None) -> SimulatedDlr:
-    """Simulates a Meta (WhatsApp Cloud API) status webhook: sent / delivered / read / failed for one wamid."""
-    st = {"id": wamid, "status": status, "timestamp": str(timestamp or int(time.time())), "recipient_id": recipient_id,
+    """Simulates a Meta (WhatsApp Cloud API) status webhook: sent / delivered / read / failed.
+    message_id is the platform's own id (the receiver's lookup key); the wamid is Meta's id."""
+    st = {"id": wamid or f"wamid.{message_id}", "message_id": message_id, "status": status,
+          "timestamp": str(timestamp or int(time.time())), "recipient_id": recipient_id,
           "pricing": {"billable": True, "pricing_model": "CBP", "category": "utility"}}
-    if message_id:          # the platform's own id; when present it is the receiver's lookup key
-        st["message_id"] = message_id
     if callback_data:
         st["biz_opaque_callback_data"] = callback_data
     if error_code is not None:
@@ -250,7 +250,7 @@ def send_meta_dlr(wamid: str, status: str = "delivered", recipient_id: str = "91
         "messaging_product": "whatsapp", "metadata": {"display_phone_number": "15550000000", "phone_number_id": "PN"},
         "statuses": [st]}}]}]}
     response = _session.post(f"{base_url}/api/v1/dlr/receive", json=payload, headers=headers or {}, timeout=10)
-    return SimulatedDlr(message_id or wamid, response.status_code)
+    return SimulatedDlr(message_id, response.status_code)
 
 
 def send_billing_dlr(message_id: str, parts: int = 1, amount_per_part: str = "1", currency: str = "INR",

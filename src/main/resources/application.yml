@@ -135,6 +135,9 @@ dlr:
   # Signature: set DLR_HMAC_ENABLED=true, header X-Hub-Signature-256 and the app secret as DLR_HMAC_SECRET.
   meta:
     verify-token: ${DLR_META_VERIFY_TOKEN:}
+    # message_id is the platform's own id inside each status ({"id":"wamid...","message_id":"<uuid>"}).
+    # true: a status without it is stored as REJECTED. false: fall back to the wamid as message_id.
+    require-message-id: ${DLR_META_REQUIRE_MESSAGE_ID:true}
 
   # Billing DLRs: {"event_type":"billing","events":[{"transaction_type":"debit","message_id":"<id>:1",...}]}
   # received on the same /api/v1/dlr/receive endpoint and correlated to the status DLR by message_id.

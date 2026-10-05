@@ -92,6 +92,16 @@ class MetaWhatsAppDlrAdapterTest {
     }
 
     @Test
+    void byDefaultAStatusWithoutMessageIdIsRejected() {
+        MetaWhatsAppDlrAdapter strict = AdapterTestSupport.strictMetaAdapter();
+        assertThatThrownBy(() -> strict.normalize(json("{\"id\":\"wamid.X\",\"status\":\"read\",\"recipient_id\":\"91\"}")))
+                .isInstanceOf(DlrValidationException.class).hasMessageContaining("message_id is missing");
+        assertThat(strict.normalize(json("{\"id\":\"wamid.X\",\"message_id\":\"m-9\",\"status\":\"read\"}"))
+                .getMessageId()).isEqualTo("m-9");
+        assertThat(strict.peekMessageId(json("{\"id\":\"wamid.X\"}"))).isNull();
+    }
+
+    @Test
     void platformMessageIdIsUsedInsteadOfTheWamid() {
         NormalizedDlr d = adapter.normalize(json("""
                 {"field":"messages","object":"whatsapp_business_account","status":{

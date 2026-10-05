@@ -48,11 +48,13 @@ public class MetaWhatsAppDlrAdapter implements DlrProviderAdapter {
     private final StatusNormalizer statusNormalizer;
     private final ObjectMapper mapper;
     private final ZoneId zone;
+    private final boolean requireMessageId;
 
     public MetaWhatsAppDlrAdapter(StatusNormalizer statusNormalizer, ObjectMapper mapper, DlrProperties properties) {
         this.statusNormalizer = statusNormalizer;
         this.mapper = mapper;
         this.zone = ZoneId.of(properties.getTimezone());
+        this.requireMessageId = properties.getMeta().isRequireMessageId();
     }
 
     @Override
@@ -132,7 +134,7 @@ public class MetaWhatsAppDlrAdapter implements DlrProviderAdapter {
             return null;
         }
         String own = text(status(payload), "message_id");
-        return own != null ? own : text(status(payload), "id");
+        return own != null || requireMessageId ? own : text(status(payload), "id");
     }
 
     /** Accepts one envelope from {@link #statuses} or a bare status object. */
@@ -146,6 +148,9 @@ public class MetaWhatsAppDlrAdapter implements DlrProviderAdapter {
         // That id is what the send API returned, so it is the lookup key; the wamid is kept as external_message_id.
         String wamid = text(s, "id");
         String own = text(s, "message_id");
+        if (own == null && requireMessageId) {
+            throw new DlrValidationException(SOURCE, "message_id is missing (only Meta's wamid was sent)");
+        }
         String id = own != null ? own : wamid;
         String providerStatus = text(s, "status");
         String recipient = text(s, "recipient_id");

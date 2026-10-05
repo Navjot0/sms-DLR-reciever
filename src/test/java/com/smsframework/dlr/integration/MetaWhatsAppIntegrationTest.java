@@ -11,7 +11,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Meta (WhatsApp Cloud API) status webhooks end to end against PostgreSQL. */
-@TestPropertySource(properties = "dlr.meta.verify-token=test-verify-token")
+@TestPropertySource(properties = {"dlr.meta.verify-token=test-verify-token", "dlr.meta.require-message-id=false"})
 class MetaWhatsAppIntegrationTest extends AbstractIntegrationTest {
 
     static String webhook(String... statuses) {

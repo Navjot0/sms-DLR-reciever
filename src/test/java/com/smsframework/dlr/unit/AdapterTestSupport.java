@@ -29,6 +29,12 @@ final class AdapterTestSupport {
     }
 
     static com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter metaAdapter() {
+        DlrProperties p = new DlrProperties();
+        p.getMeta().setRequireMessageId(false);      // wamid fallback, for payloads without message_id
+        return new com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter(NORMALIZER, MAPPER, p);
+    }
+
+    static com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter strictMetaAdapter() {
         return new com.smsframework.dlr.meta.MetaWhatsAppDlrAdapter(NORMALIZER, MAPPER, PROPS);
     }
 

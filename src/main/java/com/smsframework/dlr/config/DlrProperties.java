@@ -332,6 +332,14 @@ public class DlrProperties {
     public static class Meta {
         /** Token Meta sends as hub.verify_token when the callback URL is saved (GET /api/v1/dlr/receive). */
         private String verifyToken = "";
+        /**
+         * Every Meta status must carry the platform's own message_id; a status with only Meta's wamid is stored
+         * as REJECTED. false = fall back to the wamid as message_id.
+         */
+        private boolean requireMessageId = true;
+
+        public boolean isRequireMessageId() { return requireMessageId; }
+        public void setRequireMessageId(boolean requireMessageId) { this.requireMessageId = requireMessageId; }
 
         public String getVerifyToken() { return verifyToken; }
         public void setVerifyToken(String verifyToken) { this.verifyToken = verifyToken; }

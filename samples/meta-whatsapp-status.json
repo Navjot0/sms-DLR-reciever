@@ -12,6 +12,7 @@
             "statuses": [
               {
                 "id": "wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJBNjQ1RkU2MTk3RjE3Q0UwNTEA",
+                "message_id": "7e305e16-a9f5-4b8d-9741-34da6eb45dc4",
                 "status": "delivered",
                 "timestamp": "1727780000",
                 "recipient_id": "919000000001",
@@ -21,6 +22,7 @@
               },
               {
                 "id": "wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJBNjQ1RkU2MTk3RjE3Q0UwNTIA",
+                "message_id": "40d5d342-c270-4bf0-8920-ef3e4c4e97e0",
                 "status": "failed",
                 "timestamp": "1727780003",
                 "recipient_id": "919000000002",
