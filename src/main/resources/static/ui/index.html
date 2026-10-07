@@ -150,7 +150,6 @@
 
 <main>
   <section class="tiles" id="tiles" aria-label="Totals for the selected window"></section>
-  <section class="cats" id="cats" aria-label="Counts per category"></section>
 
   <section class="card">
     <h2><span id="chartTitle">DLRs per minute</span>
@@ -333,7 +332,6 @@
     ];
     $("tiles").innerHTML = tiles.map(([l, v, cls, sub]) =>
       `<div class="tile"><div class="label">${esc(l)}</div><div class="value ${cls}">${esc(v)}</div><div class="sub">${esc(sub)}</div></div>`).join("");
-    $("cats").innerHTML = (stats.categories || []).map(renderCategory).join("");
   }
   function pct(a, b) { return b ? `${(100 * (a || 0) / b).toFixed(1)}%` : "—"; }
   function num(label, value, sub, sw) {

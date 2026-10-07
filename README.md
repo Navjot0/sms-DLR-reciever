@@ -112,7 +112,6 @@ The page is served by the receiver itself and needs no build step or external as
 |---|---|
 | Header | Service and database health, a live/paused indicator, the time window (15 min to 30 days, or all time), the refresh interval, an API key and a light/dark toggle |
 | Totals | Total DLRs, Delivered, Failed (including expired), Rejected, Billing (events and net amount) and Short URL clicks |
-| Category cards | **Default SMS**: Delivered, Failed, Rejected, Sent/pending, Billing and Total DLRs, with percentages and a bar. **WebEngage**: Sent, Failed, Rejected and Total DLRs (WebEngage reports no delivered receipt). **Short URL**: clicks, messages clicked and distinct links |
 | Chart | DLRs per minute (per hour for 7 days and longer), stacked by Default SMS, WebEngage and Short URL clicks, with a hover tooltip |
 | **Live feed** | Incoming status DLRs, billing events and clicks, newest first. New rows are highlighted. You can filter by category, show or hide billing, filter by status, and search by message id, mobile or status. Clicking a message id opens the lookup |
 | **Message lookup** | One message, with or without `:part`: delivery state and parts, billing summary, click summary, and every callback as a timeline with its raw JSON. It can auto-refresh. `/ui/?message_id=<id>` links directly to it |
