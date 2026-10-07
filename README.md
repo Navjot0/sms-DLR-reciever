@@ -26,6 +26,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [RCS DLRs](#rcs-dlrs)
 - [Email DLRs](#email-dlrs)
 - [Database](#database)
+- [Data retention](#data-retention)
 - [Security](#security)
 - [Logging](#logging)
 - [Monitoring and health](#monitoring-and-health)
@@ -703,6 +704,23 @@ SELECT source, provider_status, count(*) FROM dlr_events WHERE normalized_status
 
 ---
 
+## Data retention
+
+Old data is deleted automatically. By default, anything older than **7 days** is removed: status DLRs (`dlr_events`), message states (`dlr_message_status`), billing events and short-link clicks.
+
+- The clean-up runs one minute after start-up and then every hour, on every instance. It deletes in batches of 5,000 rows, each in its own short transaction, so incoming callbacks are not blocked.
+- A message state is deleted once it has received nothing for 7 days. An old event that still backs the current status of an active message is kept until that message itself ages out.
+- After deletion, `GET /api/v1/dlr/{id}` answers `received: false` for that message, and the live UI's longer windows (30 days, All time) show at most the retained period.
+- `GET /api/v1/dlr/retention` shows the settings. `POST /api/v1/dlr/retention/run` runs the clean-up immediately and returns how many rows were deleted per table.
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `DLR_RETENTION_ENABLED` | `true` | `false` keeps everything for ever |
+| `DLR_RETENTION_DAYS` | `7` | Age in days after which data is deleted |
+| `DLR_RETENTION_INTERVAL_MS` | `3600000` | Time between clean-up runs (1 hour) |
+
+---
+
 ## Security
 
 Callback authentication is off by default for local automation. **It is required in production.** When the `prod` or `production` profile is active (`dlr.security.enforce-in-profiles`), the service refuses to start unless authentication is enabled and fully configured.
@@ -847,6 +865,7 @@ The full, commented configuration is in `src/main/resources/application.yml`, wi
 | `DLR_TIMEZONE` | `Asia/Kolkata` | Zone for zoned or epoch provider timestamps and the receiver-time `received_at` fallback |
 | `DLR_INSTANCE_ID` | hostname | Written to `dlr_events.receiver_instance` |
 | `DLR_META_REQUIRE_MESSAGE_ID` | `true` | Reject Meta statuses that have no platform `message_id` |
+| `DLR_RETENTION_DAYS` | `7` | Data older than this many days is deleted automatically (see [Data retention](#data-retention)) |
 | `DLR_META_VERIFY_TOKEN` | – | Token for Meta's callback URL check (`GET /api/v1/dlr/receive?hub.mode=subscribe…`) |
 | `DLR_BILLING_ENABLED` | `true` | Accept billing DLRs (other billing settings are under `dlr.billing` in `application.yml`) |
 | `DLR_MAX_PAYLOAD_BYTES` | `10485760` | Max callback body (10 MB). Bulk-campaign billing callbacks carry one event per recipient, about 200 bytes each |

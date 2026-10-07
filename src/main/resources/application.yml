@@ -156,6 +156,16 @@ dlr:
     # true: a status without it is stored as REJECTED. false: fall back to the wamid as message_id.
     require-message-id: ${DLR_META_REQUIRE_MESSAGE_ID:true}
 
+  # Automatic clean-up: status DLRs, message states, billing events and clicks older than `days` are deleted.
+  # Runs one minute after start-up and then every `interval-ms` (1 hour), in batches of `batch-size` rows.
+  retention:
+    enabled: ${DLR_RETENTION_ENABLED:true}
+    days: ${DLR_RETENTION_DAYS:7}
+    interval-ms: ${DLR_RETENTION_INTERVAL_MS:3600000}
+    initial-delay-ms: 60000
+    batch-size: 5000
+    max-batches-per-run: 200
+
   # Billing DLRs: {"event_type":"billing","events":[{"transaction_type":"debit","message_id":"<id>:1",...}]}
   # received on the same /api/v1/dlr/receive endpoint and correlated to the status DLR by message_id.
   billing:

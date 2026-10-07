@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
+@org.springframework.scheduling.annotation.EnableScheduling
 @ConfigurationPropertiesScan
 public class DlrReceiverApplication {
 

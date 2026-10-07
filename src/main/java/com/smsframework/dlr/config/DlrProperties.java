@@ -50,6 +50,7 @@ public class DlrProperties {
 
     private final Clicks clicks = new Clicks();
     private final Meta meta = new Meta();
+    private final Retention retention = new Retention();
 
     // ------------------------------------------------------------------
 
@@ -340,6 +341,36 @@ public class DlrProperties {
     public Billing getBilling() { return billing; }
     public Clicks getClicks() { return clicks; }
     public Meta getMeta() { return meta; }
+    public Retention getRetention() { return retention; }
+
+    /** Automatic deletion of old data. */
+    public static class Retention {
+        /** false = keep everything for ever. */
+        private boolean enabled = true;
+        /** Rows older than this many days are deleted. */
+        private int days = 7;
+        /** Time between clean-up runs. */
+        private long intervalMs = 3_600_000;
+        /** Delay before the first run after start-up. */
+        private long initialDelayMs = 60_000;
+        /** Rows deleted per statement (each batch is its own short transaction). */
+        private int batchSize = 5_000;
+        /** Batches per table in one run; anything left is picked up by the next run. */
+        private int maxBatchesPerRun = 200;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getDays() { return days; }
+        public void setDays(int days) { this.days = days; }
+        public long getIntervalMs() { return intervalMs; }
+        public void setIntervalMs(long intervalMs) { this.intervalMs = intervalMs; }
+        public long getInitialDelayMs() { return initialDelayMs; }
+        public void setInitialDelayMs(long initialDelayMs) { this.initialDelayMs = initialDelayMs; }
+        public int getBatchSize() { return batchSize; }
+        public void setBatchSize(int batchSize) { this.batchSize = batchSize; }
+        public int getMaxBatchesPerRun() { return maxBatchesPerRun; }
+        public void setMaxBatchesPerRun(int maxBatchesPerRun) { this.maxBatchesPerRun = maxBatchesPerRun; }
+    }
 
     /** Meta (WhatsApp Cloud API) webhooks. */
     public static class Meta {
