@@ -45,6 +45,8 @@ public record DlrVerificationResponse(
             String currency,
             boolean clicked,
             Integer clickCount,
-            Boolean matched) {
+            Boolean matched,
+            /* The DLR exactly as the provider / CPaaS sent it (for "<id>:<n>": that recipient's own DLR). */
+            com.fasterxml.jackson.databind.JsonNode dlr) {
     }
 }

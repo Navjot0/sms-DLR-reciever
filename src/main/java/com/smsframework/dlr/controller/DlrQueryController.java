@@ -34,6 +34,36 @@ public class DlrQueryController {
         this.queryService = queryService;
     }
 
+    /**
+     * Only the DLR JSON, exactly as CPaaS / the provider sent it. 404 while no DLR has been received.
+     * all=true returns a JSON array with every DLR received for the id, oldest first ([] when none).
+     */
+    @GetMapping("/{messageId}/json")
+    public org.springframework.http.ResponseEntity<?> dlrJson(@PathVariable String messageId,
+                                                              @RequestParam(defaultValue = "false") boolean all) {
+        if (all) {
+            return org.springframework.http.ResponseEntity.ok(queryService.dlrJsonAll(messageId));
+        }
+        com.fasterxml.jackson.databind.JsonNode dlr = queryService.dlrJson(messageId);
+        if (dlr == null) {
+            java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("message_id", messageId);
+            body.put("received", false);
+            body.put("message", "no DLR received yet for this message_id");
+            return org.springframework.http.ResponseEntity.status(404).body(body);
+        }
+        return org.springframework.http.ResponseEntity.ok(dlr);
+    }
+
+    /**
+     * DLR JSON for many ids in one call: body {"message_ids":[...]}, response a JSON array in the same order,
+     * with null for an id that has no DLR yet.
+     */
+    @PostMapping(value = "/json", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public List<com.fasterxml.jackson.databind.JsonNode> dlrJsonBulk(@RequestBody java.util.Map<String, List<String>> body) {
+        return queryService.dlrJsonBulk(body == null ? null : body.get("message_ids"));
+    }
+
     /** Current DLR state for one message. received=false / status=PENDING when nothing valid arrived yet. */
     @GetMapping("/{messageId}")
     public DlrStatusResponse get(@PathVariable String messageId,

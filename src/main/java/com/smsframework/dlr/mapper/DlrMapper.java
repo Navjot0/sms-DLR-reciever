@@ -104,6 +104,7 @@ public class DlrMapper {
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -134,6 +135,11 @@ public class DlrMapper {
         }
         java.math.BigDecimal s = d.stripTrailingZeros();
         return s.scale() < 0 ? s.setScale(0) : s;
+    }
+
+    /** Raw DLR as received, as JSON. */
+    public JsonNode rawDlr(DlrEvent e) {
+        return e == null ? null : parse(e.getRawPayload());
     }
 
     private JsonNode parse(String json) {

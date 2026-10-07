@@ -76,7 +76,63 @@ public class DlrQueryService {
                     r = summary.billed() ? r.withBilling(summary) : r;
                     return clickSummary.clicked() ? r.withClicks(clickSummary) : r;
                 });
+        response = response.withDlr(mapper.rawDlr(statusEvent(requestedId)));
         return parts.isEmpty() && requested == null ? response : response.withParts(parts.isEmpty() ? null : parts, requested);
+    }
+
+    /** Only the DLR JSON, exactly as received; null while no DLR has arrived for this id. */
+    public com.fasterxml.jackson.databind.JsonNode dlrJson(String requestedId) {
+        return mapper.rawDlr(statusEvent(requestedId));
+    }
+
+    /** Every accepted DLR JSON for this id, oldest first (for "<id>:<n>": that recipient's only). */
+    public List<com.fasterxml.jackson.databind.JsonNode> dlrJsonAll(String requestedId) {
+        MessageIdParts.Parsed parsed = MessageIdParts.parse(requestedId, properties.getMessageIdPartSeparator());
+        return events.findByMessageId(parsed.messageId(), properties.getApi().getMaxEventsPageSize()).stream()
+                .filter(e -> e.getProcessingStatus() == ProcessingStatus.APPLIED
+                        || e.getProcessingStatus() == ProcessingStatus.IGNORED)
+                .filter(e -> !parsed.hasPart() || parsed.part().equals(e.getPartNumber()))
+                .map(mapper::rawDlr).toList();
+    }
+
+    /** DLR JSON for many ids, in request order; null for an id with no DLR yet. */
+    public List<com.fasterxml.jackson.databind.JsonNode> dlrJsonBulk(List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new IllegalArgumentException("message_ids must not be empty");
+        }
+        if (ids.size() > properties.getApi().getMaxVerifyIds()) {
+            throw new IllegalArgumentException("message_ids exceeds the maximum of " + properties.getApi().getMaxVerifyIds());
+        }
+        if (ids.stream().anyMatch(id -> id == null || id.isBlank())) {
+            throw new IllegalArgumentException("message_ids must not contain blank values");
+        }
+        String sep = properties.getMessageIdPartSeparator();
+        List<String> unique = ids.stream().map(this::normalizeId).distinct().toList();
+        Map<String, DlrEvent> perMessage = events.findStatusEventPerMessage(unique).stream()
+                .collect(Collectors.toMap(DlrEvent::getMessageId, Function.identity(), (a, b) -> a));
+        List<Integer> wantedParts = ids.stream().map(i -> MessageIdParts.parse(i, sep).part())
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, DlrEvent> perPart = events.findStatusEventPerPart(unique, wantedParts).stream()
+                .collect(Collectors.toMap(e -> e.getMessageId() + sep + e.getPartNumber(), Function.identity(), (a, b) -> a));
+        List<com.fasterxml.jackson.databind.JsonNode> out = new ArrayList<>(ids.size());
+        for (String id : ids) {
+            MessageIdParts.Parsed parsed = MessageIdParts.parse(id, sep);
+            DlrEvent own = parsed.hasPart() ? perPart.get(parsed.messageId() + sep + parsed.part()) : null;
+            out.add(mapper.rawDlr(own != null ? own : perMessage.get(parsed.messageId())));
+        }
+        return out;
+    }
+
+    /** The DLR behind the status of this id: the recipient's own for "<id>:<n>", otherwise the message's. */
+    private DlrEvent statusEvent(String requestedId) {
+        MessageIdParts.Parsed parsed = MessageIdParts.parse(requestedId, properties.getMessageIdPartSeparator());
+        if (parsed.hasPart()) {
+            List<DlrEvent> own = events.findStatusEventPerPart(List.of(parsed.messageId()), List.of(parsed.part()));
+            if (!own.isEmpty()) {
+                return own.get(0);
+            }
+        }
+        return events.findStatusEventPerMessage(List.of(parsed.messageId())).stream().findFirst().orElse(null);
     }
 
     public String normalizeId(String id) {
@@ -167,6 +223,14 @@ public class DlrQueryService {
                 .collect(Collectors.toMap(DlrMessageStatus::getMessageId, Function.identity()));
         Map<String, BillingSummary> billed = billing.summarize(unique, billingService.debitTypes(), billingService.creditTypes());
         Map<String, ClickSummary> clickMap = clicks.summarize(unique);
+        // The DLR JSON behind each id. "<id>:<n>" (one recipient of a bulk send) uses that recipient's own DLR.
+        String sep = properties.getMessageIdPartSeparator();
+        Map<String, DlrEvent> perMessage = events.findStatusEventPerMessage(unique).stream()
+                .collect(Collectors.toMap(DlrEvent::getMessageId, Function.identity(), (a, b) -> a));
+        List<Integer> wantedParts = ids.stream().map(i -> MessageIdParts.parse(i, sep).part())
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, DlrEvent> perPart = events.findStatusEventPerPart(unique, wantedParts).stream()
+                .collect(Collectors.toMap(e -> e.getMessageId() + sep + e.getPartNumber(), Function.identity(), (a, b) -> a));
         boolean requireBilling = request.billingRequired();
         boolean requireClick = request.clickRequired();
         boolean matching = expected != null || requireBilling || requireClick;
@@ -189,11 +253,17 @@ public class DlrQueryService {
                 results.add(new DlrVerificationResponse.Result(id, false, "PENDING", null, null, null, null,
                         b != null, b == null ? null : b.units(), b == null ? null : b.totalAmount(),
                         b == null ? null : b.currency(), c != null, c == null ? null : c.clicks(),
-                        matching ? Boolean.FALSE : null));
+                        matching ? Boolean.FALSE : null, null));
                 continue;
             }
             received++;
-            NormalizedStatus st = NormalizedStatus.parse(s.getNormalizedStatus());
+            MessageIdParts.Parsed parsedId = MessageIdParts.parse(id, sep);
+            DlrEvent own = parsedId.hasPart() ? perPart.get(parsedId.messageId() + sep + parsedId.part()) : null;
+            DlrEvent dlrEvent = own != null ? own : perMessage.get(normalizeId(id));
+            // a recipient's own DLR decides its status; otherwise the message's current status
+            NormalizedStatus st = NormalizedStatus.parse(own != null ? own.getNormalizedStatus() : s.getNormalizedStatus());
+            String providerStatus = own != null ? own.getProviderStatus() : s.getProviderStatus();
+            String statusCode = own != null ? own.getStatusCode() : s.getStatusCode();
             switch (st) {
                 case DELIVERED, READ -> delivered++;   // read implies delivered
                 case FAILED -> failed++;
@@ -208,10 +278,10 @@ public class DlrQueryService {
             if (Boolean.TRUE.equals(isMatch)) {
                 matched++;
             }
-            results.add(new DlrVerificationResponse.Result(id, true, st.name(), s.getProviderStatus(),
-                    s.getStatusCode(), s.getSource(), s.getCorrelationId(), b != null,
+            results.add(new DlrVerificationResponse.Result(id, true, st.name(), providerStatus,
+                    statusCode, s.getSource(), s.getCorrelationId(), b != null,
                     b == null ? null : b.units(), b == null ? null : b.totalAmount(), b == null ? null : b.currency(),
-                    c != null, c == null ? null : c.clicks(), isMatch));
+                    c != null, c == null ? null : c.clicks(), isMatch, mapper.rawDlr(dlrEvent)));
         }
         return new DlrVerificationResponse(ids.size(), received, delivered, failed, expired, rejected, sent, unknown,
                 missing, billedCount, ids.size() - billedCount, clickedCount, ids.size() - clickedCount,

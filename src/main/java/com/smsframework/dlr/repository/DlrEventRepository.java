@@ -107,6 +107,40 @@ public class DlrEventRepository {
                 new MapSqlParameterSource("m", messageId), MAPPER);
     }
 
+    private static final String FINAL = "normalized_status IN ('DELIVERED', 'READ', 'FAILED', 'EXPIRED', 'REJECTED')";
+    /** Same rule as the state machine: READ wins, then the first final status; without one, the latest status. */
+    private static final String STATUS_ORDER =
+            "(normalized_status = 'READ') DESC, (" + FINAL + ") DESC, CASE WHEN " + FINAL + " THEN id ELSE -id END";
+
+    /**
+     * The DLR that decides the status of each message: one event per message_id.
+     * Used to hand the original DLR JSON back to automation.
+     */
+    public List<DlrEvent> findStatusEventPerMessage(List<String> messageIds) {
+        if (messageIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.query("SELECT DISTINCT ON (message_id) id, " + COLUMNS + ", created_at, updated_at FROM dlr_events "
+                        + "WHERE message_id IN (:ids) AND processing_status IN ('APPLIED', 'IGNORED') "
+                        + "ORDER BY message_id, " + STATUS_ORDER,
+                new MapSqlParameterSource("ids", messageIds), MAPPER);
+    }
+
+    /**
+     * The DLR that decides the status of each recipient / part ("<message_id>:<n>"): one event per
+     * (message_id, part_number), limited to the requested part numbers.
+     */
+    public List<DlrEvent> findStatusEventPerPart(List<String> messageIds, List<Integer> parts) {
+        if (messageIds.isEmpty() || parts.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.query("SELECT DISTINCT ON (message_id, part_number) id, " + COLUMNS + ", created_at, updated_at "
+                        + "FROM dlr_events WHERE message_id IN (:ids) AND part_number IN (:parts) "
+                        + "AND processing_status IN ('APPLIED', 'IGNORED') "
+                        + "ORDER BY message_id, part_number, " + STATUS_ORDER,
+                new MapSqlParameterSource("ids", messageIds).addValue("parts", parts), MAPPER);
+    }
+
     public List<DlrEvent> findByProcessingStatus(ProcessingStatus status, int limit) {
         return jdbc.query(SELECT + "WHERE processing_status = :s ORDER BY id DESC LIMIT :limit",
                 new MapSqlParameterSource().addValue("s", status.name()).addValue("limit", limit), MAPPER);

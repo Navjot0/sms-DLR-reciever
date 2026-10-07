@@ -254,6 +254,29 @@ Response codes. These are meant for the provider. Automation must not depend on 
 
 ### `GET /api/v1/dlr/{messageId}`
 
+**The original DLR is returned as `dlr`.** Both this endpoint and `POST /api/v1/dlr/verify` include a `dlr` field holding the DLR JSON exactly as CPaaS (or the provider) sent it, with every field and null preserved, so automation can check the DLR format and values:
+
+```json
+{
+  "message_id": "21cc3333-c705-48dd-bf66-c8bf5f8399bb:3",
+  "received": true,
+  "status": "DELIVERED",
+  "provider_status": "DELIVRD",
+  "status_code": "000",
+  "source": "DEFAULT_SMS",
+  "billed": false,
+  "clicked": false,
+  "dlr": {
+    "message_id": "21cc3333-c705-48dd-bf66-c8bf5f8399bb:3", "service": "T", "sender": "DUMMY",
+    "mobile": "919000000003", "status": "DELIVRD", "code": "000",
+    "submit_at": "2026-10-06 15:29:58", "dlr_received_at": "2026-10-06 15:30:03",
+    "entity_id": "17011580464447946654", "template_id": null, "units": "1", "correlation_id": null
+  }
+}
+```
+
+For an id with a recipient suffix (`<id>:<n>`, one recipient of a bulk send), `dlr`, `status`, `provider_status` and `status_code` in `/verify` are that recipient's own. When several DLRs exist for one id, `dlr` is the one that decided the status: the first final one, or the read receipt for WhatsApp, RCS and email.
+
 ```json
 {
   "message_id": "2ee98174-eec2-46b1-9b3c-baa0853c9538",
@@ -285,6 +308,30 @@ If no DLR exists yet:
 ```
 
 If callbacks for that `message_id` arrived but were **rejected**, the response adds `rejected_events` and `last_rejection_reason`. This lets automation tell "the provider never called back" apart from "the callback was malformed".
+
+### `GET /api/v1/dlr/{messageId}/json` – DLR JSON only
+
+Returns **only** the DLR, exactly as CPaaS (or the provider) sent it, with nothing added:
+
+```bash
+curl http://localhost:8080/api/v1/dlr/1522ff82-2818-4670-b24e-306f0cf9266b/json
+```
+
+```json
+{
+  "message_id": "1522ff82-2818-4670-b24e-306f0cf9266b", "service": "T", "sender": "DUMMY",
+  "mobile": "919034424020", "status": "REJECTED", "code": "807",
+  "submit_at": "2026-10-06 15:29:58", "dlr_received_at": "2026-10-06 15:29:58",
+  "entity_id": "17011580464447946654", "template_id": null, "units": "2", "correlation_id": null
+}
+```
+
+- **404** with `{"message_id": …, "received": false}` while no DLR has arrived, so automation can poll it.
+- `<id>:<n>` returns that recipient's own DLR.
+- When several DLRs exist for one id, it returns the one that decided the status. Add **`?all=true`** to get a JSON array of every DLR received for the id, oldest first (`[]` when none).
+- **`POST /api/v1/dlr/json`** with `{"message_ids": ["id1", "id2:3", …]}` returns a JSON array of DLRs in the same order, with `null` for an id that has no DLR yet.
+
+Python: `get_dlr_payload(id)`, `wait_for_dlr_payload(id)`, `get_all_dlr_payloads(id)` and `get_dlr_payloads([ids])` in `automation/dlr_helper.py`.
 
 ### `POST /api/v1/dlr/verify`
 

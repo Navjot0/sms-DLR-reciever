@@ -44,7 +44,16 @@ public record DlrStatusResponse(
         /* The id used in the request when it differs from message_id (e.g. "c9b2...:1" -> "c9b2..."). */
         String requestedId,
         /* Short-link click summary. Always present once a status DLR is received; otherwise only when clicked. */
-        ClickSummary clicks) {
+        ClickSummary clicks,
+        /* The DLR exactly as the provider / CPaaS sent it (for "<id>:<n>": that recipient's own DLR). */
+        com.fasterxml.jackson.databind.JsonNode dlr) {
+
+    public DlrStatusResponse withDlr(com.fasterxml.jackson.databind.JsonNode d) {
+        return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
+                errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
+                requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, d);
+    }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record PartStatus(int part, String providerMessageId, String providerStatus, String status,
@@ -58,34 +67,34 @@ public record DlrStatusResponse(
     public static DlrStatusResponse notReceived(String messageId, Integer rejectedEvents, String lastRejectionReason) {
         return new DlrStatusResponse(messageId, null, false, null, "PENDING", null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                rejectedEvents, lastRejectionReason, null, null, null, null);
+                rejectedEvents, lastRejectionReason, null, null, null, null, null);
     }
 
     public DlrStatusResponse withEvents(List<DlrEventView> ev) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, ev,
-                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks);
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, dlr);
     }
 
     public DlrStatusResponse withBilling(BillingSummary b) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, b, parts, requestedId, clicks);
+                rejectedEvents, lastRejectionReason, b, parts, requestedId, clicks, dlr);
     }
 
     public DlrStatusResponse withParts(List<PartStatus> p, String requested) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, billing, p, requested, clicks);
+                rejectedEvents, lastRejectionReason, billing, p, requested, clicks, dlr);
     }
 
     public DlrStatusResponse withClicks(ClickSummary c) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, billing, parts, requestedId, c);
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, c, dlr);
     }
 }
