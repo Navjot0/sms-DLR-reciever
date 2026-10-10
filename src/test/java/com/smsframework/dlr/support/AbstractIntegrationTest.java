@@ -52,7 +52,7 @@ public abstract class AbstractIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
-        jdbc.execute("TRUNCATE dlr_click_events, dlr_billing_events, dlr_message_status, dlr_events RESTART IDENTITY CASCADE");
+        jdbc.execute("TRUNCATE webhook_requests, dlr_click_events, dlr_billing_events, dlr_message_status, dlr_events RESTART IDENTITY CASCADE");
     }
 
     protected String url(String path) {

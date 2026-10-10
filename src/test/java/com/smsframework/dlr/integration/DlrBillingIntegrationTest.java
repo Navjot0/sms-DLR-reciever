@@ -170,9 +170,12 @@ class DlrBillingIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void invalidBillingCallbacksAreStoredAsRejected() {
-        assertThat(postDlr("{\"event_type\":\"billing\"}", DEFAULT_SMS).statusCode()).isEqualTo(400);
-        assertThat(postDlr("{\"event_type\":\"billing\",\"events\":[{\"units\":1}]}", DEFAULT_SMS).statusCode()).isEqualTo(400);
-        assertThat(postDlr(TestPayloads.BILLING_EXAMPLE, Map.of("X-DLR-Source", "WEBENGAGE")).statusCode()).isEqualTo(400);
+        // acknowledged (captured); as billing DLRs they are invalid and stored REJECTED
+        assertThat(postDlr("{\"event_type\":\"billing\"}", DEFAULT_SMS).statusCode()).isEqualTo(200);
+        assertThat(postDlr("{\"event_type\":\"billing\",\"events\":[{\"units\":1}]}", DEFAULT_SMS).statusCode()).isEqualTo(200);
+        assertThat(postDlr(TestPayloads.BILLING_EXAMPLE, Map.of("X-DLR-Source", "WEBENGAGE")).statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForList("SELECT interpretation_status FROM webhook_requests ORDER BY id", String.class))
+                .containsExactly("INVALID_DLR", "INVALID_DLR", "INVALID_DLR");
 
         assertThat(jdbc.queryForList("SELECT rejection_reason FROM dlr_events ORDER BY id", String.class))
                 .containsExactly("billing: events is missing",

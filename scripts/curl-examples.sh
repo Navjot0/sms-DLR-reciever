@@ -101,6 +101,15 @@ curl -sS "$BASE/api/v1/dlr/events/billing/rejected?limit=5" "${AUTH[@]}"; echo
 step "14c. Reprocess rejected callbacks (e.g. after deploying a fix)"
 curl -sS -X POST "$BASE/api/v1/dlr/events/rejected/reprocess?limit=100" "${AUTH[@]}"; echo
 
+step "14d. Universal capture: any format is stored exactly (ack header X-Capture-Id)"
+CAP=$(curl -sS -D - -o /dev/null -X POST "$BASE/api/v1/dlr/receive?trace=demo" "${AUTH[@]}" \
+  -H 'Content-Type: application/x-www-form-urlencoded' --data-binary 'message_id=form-demo-1&status=DELIVRD' \
+  | tr -d '\r' | awk -F': ' 'tolower($1)=="x-capture-id"{print $2}')
+echo "capture_id=$CAP"
+curl -sS "$BASE/api/v1/webhooks/requests/$CAP" "${AUTH[@]}"; echo
+curl -sS "$BASE/api/v1/webhooks/requests/$CAP/raw" "${AUTH[@]}"; echo
+curl -sS "$BASE/api/v1/webhooks/requests?message_id=form-demo-1&limit=5" "${AUTH[@]}"; echo
+
 step "15. Health + metrics"
 curl -sS "$BASE/actuator/health"; echo
 curl -sS "$BASE/actuator/prometheus" 2>/dev/null | grep -E '^dlr_(received|delivered|failed|duplicate|rejected|ignored|billing_[a-z]+|click_[a-z]+)_total' || \

@@ -238,23 +238,29 @@ class DlrProcessingServiceTest {
     }
 
     @Test
-    void malformedJsonIsPersistedAsRejectedWithRawBody() {
+    void malformedJsonIsUnrecognizedAndNotStoredAsDlr() {
         ProcessingResult r = service.process(null, "{not json");
 
-        assertThat(r.processingStatus()).isEqualTo(ProcessingStatus.REJECTED);
-        assertThat(r.rejectionReason()).isEqualTo("malformed JSON payload");
-        ArgumentCaptor<DlrEvent> captor = ArgumentCaptor.forClass(DlrEvent.class);
-        verify(events).insert(captor.capture());
-        assertThat(captor.getValue().getRawPayload()).contains("_unparseable_body").contains("{not json");
+        assertThat(r.processingStatus()).isEqualTo(ProcessingStatus.UNRECOGNIZED);
+        assertThat(r.note()).isEqualTo(DlrProcessingService.UNRECOGNIZED_MALFORMED);
+        assertThat(r.normalizedStatus()).isNull();
+        verify(events, never()).insert(any());
     }
 
     @Test
-    void unknownSourceAndUndetectablePayloadAreRejected() {
-        assertThat(service.process("ACME", TestPayloads.WEBENGAGE_EXAMPLE).rejectionReason())
-                .startsWith("unsupported DLR source: ACME");
-        assertThat(service.process(null, "{\"foo\":1}").rejectionReason())
-                .startsWith("unable to determine DLR source");
-        assertThat(service.process(null, "").rejectionReason()).isEqualTo("request body is empty");
+    void unknownSourceAndUndetectablePayloadAreUnrecognizedNotRejected() {
+        ProcessingResult acme = service.process("ACME", TestPayloads.WEBENGAGE_EXAMPLE);
+        assertThat(acme.processingStatus()).isEqualTo(ProcessingStatus.UNRECOGNIZED);
+        assertThat(acme.rejectionReason()).startsWith("no DLR adapter for source ACME");
+        ProcessingResult foo = service.process(null, "{\"foo\":1}");
+        assertThat(foo.processingStatus()).isEqualTo(ProcessingStatus.UNRECOGNIZED);
+        assertThat(foo.note()).isEqualTo(DlrProcessingService.UNRECOGNIZED_UNKNOWN);
+        assertThat(foo.normalizedStatus()).isNull();
+        ProcessingResult empty = service.process(null, "");
+        assertThat(empty.processingStatus()).isEqualTo(ProcessingStatus.UNRECOGNIZED);
+        assertThat(empty.note()).isEqualTo(DlrProcessingService.UNRECOGNIZED_EMPTY);
+        verify(events, never()).insert(any());
+        verify(events, never()).insertIfAbsent(any());
     }
 
     @Test

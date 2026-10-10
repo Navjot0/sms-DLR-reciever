@@ -235,8 +235,11 @@ class DlrReceiverIntegrationTest extends AbstractIntegrationTest {
         String body = "{\"payload\":{\"mobile\":\"917973059161\",\"status\":\"DELIVRD\"}}";
         HttpResponse<String> r = postDlr(body, DEFAULT_SMS);
 
-        assertThat(r.statusCode()).isEqualTo(400);
+        // captured (acknowledged), but as a DLR it is invalid: stored REJECTED for automation
+        assertThat(r.statusCode()).isEqualTo(200);
         JsonNode ack = readJson(r.body());
+        assertThat(ack.get("captured").asBoolean()).isTrue();
+        assertThat(ack.get("interpretation_status").asText()).isEqualTo("INVALID_DLR");
         assertThat(ack.get("processing_status").asText()).isEqualTo("REJECTED");
         assertThat(ack.get("rejection_reason").asText()).isEqualTo("message_id is missing");
 
@@ -259,33 +262,42 @@ class DlrReceiverIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void malformedJsonUnknownSourceAndEmptyBodyAreStoredNotDropped() {
-        assertThat(postDlr("{broken json", DEFAULT_SMS).statusCode()).isEqualTo(400);
-        assertThat(postDlr(TestPayloads.WEBENGAGE_EXAMPLE, Map.of("X-DLR-Source", "ACME")).statusCode()).isEqualTo(400);
-        assertThat(postDlr("", Map.of()).statusCode()).isEqualTo(400);
-        assertThat(postDlr("{\"hello\":\"world\"}", Map.of()).statusCode()).isEqualTo(400);
+    void malformedJsonUnknownSourceAndEmptyBodyAreCapturedNotRejected() {
+        assertThat(postDlr("{broken json", DEFAULT_SMS).statusCode()).isEqualTo(200);
+        assertThat(postDlr(TestPayloads.WEBENGAGE_EXAMPLE, Map.of("X-DLR-Source", "ACME")).statusCode()).isEqualTo(200);
+        assertThat(postDlr("", Map.of()).statusCode()).isEqualTo(200);
+        assertThat(postDlr("{\"hello\":\"world\"}", Map.of()).statusCode()).isEqualTo(200);
 
+        // nothing understood as a DLR: no dlr_events rows, every request kept as a capture
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM dlr_events", Integer.class)).isZero();
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT source, rejection_reason, raw_payload::text AS raw FROM dlr_events ORDER BY id");
+                "SELECT interpretation_status, detected_source, convert_from(raw_body, 'UTF8') AS body FROM webhook_requests ORDER BY id");
         assertThat(rows).hasSize(4);
-        assertThat(rows.get(0).get("rejection_reason")).isEqualTo("malformed JSON payload");
-        assertThat(rows.get(0).get("raw").toString()).contains("{broken json");
-        assertThat(rows.get(1).get("source")).isEqualTo("ACME");
-        assertThat(rows.get(1).get("rejection_reason").toString()).startsWith("unsupported DLR source: ACME");
-        assertThat(rows.get(2).get("rejection_reason")).isEqualTo("request body is empty");
-        assertThat(rows.get(3).get("rejection_reason").toString()).startsWith("unable to determine DLR source");
+        assertThat(rows.get(0).get("interpretation_status")).isEqualTo("MALFORMED_JSON");
+        assertThat(rows.get(0).get("body")).isEqualTo("{broken json");
+        assertThat(rows.get(1).get("interpretation_status")).isEqualTo("UNRECOGNIZED");
+        assertThat(rows.get(1).get("detected_source")).isEqualTo("ACME");
+        assertThat(rows.get(2).get("interpretation_status")).isEqualTo("EMPTY");
+        assertThat(rows.get(3).get("interpretation_status")).isEqualTo("UNRECOGNIZED");
 
-        JsonNode rejected = getJson("/api/v1/dlr/events/rejected?limit=10");
-        assertThat(rejected).hasSize(4);
+        assertThat(getJson("/api/v1/dlr/events/rejected?limit=10")).isEmpty();
     }
 
     @Test
-    void oversizedPayloadIsRejectedWith413AndStored() {
+    void oversizedPayloadIsRefusedWith413WithoutClaimingCapture() {
         String huge = "{\"payload\":{\"message_id\":\"big\",\"mobile\":\"1\",\"status\":\"DELIVRD\",\"pad\":\""
                 + "x".repeat(10 * 1024 * 1024 + 10) + "\"}}";
-        assertThat(postDlr(huge, DEFAULT_SMS).statusCode()).isEqualTo(413);
-        assertThat(jdbc.queryForObject("SELECT raw_payload->>'_payload_too_large' FROM dlr_events", String.class))
-                .isEqualTo("true");
+        HttpResponse<String> r = postDlr(huge, DEFAULT_SMS);
+        assertThat(r.statusCode()).isEqualTo(413);
+        assertThat(readJson(r.body()).get("captured").asBoolean()).isFalse();
+        // request metadata is recorded for diagnostics, the body is not
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT interpretation_status, body_truncated, raw_body IS NULL AS no_body, body_size_bytes FROM webhook_requests");
+        assertThat(row.get("interpretation_status")).isEqualTo("TOO_LARGE");
+        assertThat(row.get("body_truncated")).isEqualTo(true);
+        assertThat(row.get("no_body")).isEqualTo(true);
+        assertThat(((Number) row.get("body_size_bytes")).longValue()).isGreaterThan(10L * 1024 * 1024);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM dlr_events", Integer.class)).isZero();
     }
 
     // ------------------------------------------------------------------ verification / lookup APIs

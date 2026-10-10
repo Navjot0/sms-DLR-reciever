@@ -39,7 +39,9 @@ public class DlrQueryController {
      * spacing and escaping). 404 while no DLR has been received.
      * status=submitted|sent|delivered|read|failed|rejected|... returns the DLR sent for that one status.
      * all=true returns a JSON array of every DLR received for the id, oldest first ([] when none).
-     * Header X-DLR-Processing-Status says ACCEPTED, or REJECTED for a DLR that arrived but could not be processed.
+     * Header X-DLR-Processing-Status says ACCEPTED, or REJECTED for a DLR that arrived but could not be processed,
+     * or UNRECOGNIZED for a captured webhook whose format no DLR adapter knows (body = the exact request body,
+     * with its original Content-Type; X-Capture-Id names the capture).
      */
     @GetMapping(value = "/{messageId}/json", produces = MediaType.APPLICATION_JSON_VALUE)
     public org.springframework.http.ResponseEntity<?> dlrJson(@PathVariable String messageId,
@@ -61,6 +63,27 @@ public class DlrQueryController {
                 e = queryService.rejectedDlrEvent(messageId);
             }
             notFound = "no DLR received yet for this message_id";
+        }
+        if (e == null && (status == null || status.isBlank())) {
+            // not a DLR the receiver understood, but captured: return the request body exactly as received
+            var capture = queryService.latestUninterpretedCapture(messageId);
+            if (capture.isPresent()) {
+                java.util.UUID cid = (java.util.UUID) capture.get().get("capture_id");
+                var raw = queryService.captureRawBody(cid).orElse(null);
+                if (raw != null && raw.bytes() != null) {
+                    MediaType ct;
+                    try {
+                        ct = raw.contentType() == null ? MediaType.APPLICATION_OCTET_STREAM : MediaType.parseMediaType(raw.contentType());
+                    } catch (RuntimeException ex) {
+                        ct = MediaType.APPLICATION_OCTET_STREAM;
+                    }
+                    return org.springframework.http.ResponseEntity.ok().contentType(ct)
+                            .header("X-DLR-Processing-Status", "UNRECOGNIZED")
+                            .header("X-Interpretation-Status", String.valueOf(capture.get().get("interpretation_status")))
+                            .header("X-Capture-Id", cid.toString())
+                            .body(raw.bytes());
+                }
+            }
         }
         if (e == null) {
             java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();

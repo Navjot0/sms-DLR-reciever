@@ -44,9 +44,13 @@ public class DlrQueryService {
     private final BillingProcessingService billingService;
     private final DlrClickRepository clicks;
 
+    private final com.smsframework.dlr.capture.WebhookCaptureRepository captures;
+
     public DlrQueryService(DlrMessageStatusRepository statuses, DlrEventRepository events, DlrMapper mapper,
                            DlrProperties properties, DlrBillingRepository billing,
-                           BillingProcessingService billingService, DlrClickRepository clicks) {
+                           BillingProcessingService billingService, DlrClickRepository clicks,
+                           com.smsframework.dlr.capture.WebhookCaptureRepository captures) {
+        this.captures = captures;
         this.clicks = clicks;
         this.billing = billing;
         this.billingService = billingService;
@@ -77,7 +81,39 @@ public class DlrQueryService {
                     return clickSummary.clicked() ? r.withClicks(clickSummary) : r;
                 });
         response = response.withDlr(mapper.rawDlr(statusEvent(requestedId)));
+        DlrStatusResponse.CaptureSummary cs = captureSummary(requestedId);
+        if (cs != null) {
+            response = response.withCaptures(cs);
+        }
         return parts.isEmpty() && requested == null ? response : response.withParts(parts.isEmpty() ? null : parts, requested);
+    }
+
+    /** Webhook captures carrying this id (the id as given and without its ":part"), or null when there are none. */
+    public DlrStatusResponse.CaptureSummary captureSummary(String requestedId) {
+        List<String> ids = captures.messageIdVariants(requestedId);
+        java.util.Map<String, Long> counts = captures.countsForMessage(ids);
+        if (counts.isEmpty()) {
+            return null;
+        }
+        java.util.Map<String, Object> latest = captures.latestForMessage(ids, null).orElse(null);
+        long total = counts.values().stream().mapToLong(Long::longValue).sum();
+        return new DlrStatusResponse.CaptureSummary(total, counts,
+                latest == null ? null : String.valueOf(latest.get("capture_id")),
+                latest == null ? null : (String) latest.get("interpretation_status"),
+                latest == null ? null : (java.time.OffsetDateTime) latest.get("received_at"));
+    }
+
+    /**
+     * Newest capture for this id that the DLR pipeline could not interpret (unknown format, not JSON, ...).
+     * Used by the /json API as a last resort so automation still sees what was sent.
+     */
+    public java.util.Optional<java.util.Map<String, Object>> latestUninterpretedCapture(String requestedId) {
+        return captures.latestForMessage(captures.messageIdVariants(requestedId),
+                List.of("UNRECOGNIZED", "MALFORMED_JSON", "NOT_JSON"));
+    }
+
+    public java.util.Optional<com.smsframework.dlr.capture.WebhookCaptureRepository.RawBody> captureRawBody(java.util.UUID id) {
+        return captures.rawBody(id);
     }
 
     /** Only the DLR JSON, exactly as received; null while no DLR has arrived for this id. */

@@ -67,6 +67,11 @@ public class DlrMetrics {
                 .description("Valid DLRs not applied by the state machine").register(registry).increment();
     }
 
+    /** Payload captured but not recognised as a DLR: dlr_unrecognized_total. */
+    public void unrecognized(String source) {
+        counter("unrecognized", source).increment();
+    }
+
     public void processingError(String source) {
         counter("processing.error", source).increment();
     }

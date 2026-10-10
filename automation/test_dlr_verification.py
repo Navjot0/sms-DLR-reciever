@@ -157,3 +157,23 @@ def test_short_link_clicks_are_counted_per_message():
     assert clicks["clicks"] == 2
     assert clicks["visited_count"] == 2
     assert verify_dlrs([message_id], require_click=True)["all_matched"] is True
+
+
+def test_unknown_webhook_is_captured_but_never_counts_as_delivered():
+    from dlr_helper import get_capture_raw, send_raw_request, wait_for_capture
+
+    message_id = create_sms()
+    body = '{"msgId": "%s",  "deliveryStatus": "DELIVERED", "a": 1, "a": 2}\r\n' % message_id
+    ack = send_raw_request(body, params={"trace": "x"})
+    capture_id = ack.headers["X-Capture-Id"]
+
+    capture = wait_for_capture(message_id, timeout=30, poll_interval=0.5)
+    assert capture["capture_id"] == capture_id
+    assert capture["interpretation_status"] == "UNRECOGNIZED"
+    assert capture["query_params"] == {"trace": ["x"]}
+    assert get_capture_raw(capture_id) == body.encode()          # exact bytes, duplicate keys kept
+
+    dlr = get_dlr(message_id)
+    assert dlr["received"] is False and dlr["status"] == "PENDING"
+    assert dlr["captures"]["total"] == 1
+    assert verify_dlrs([message_id], expected_status="DELIVERED")["all_matched"] is False

@@ -25,6 +25,8 @@ public class CallbackAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(CallbackAuthenticationFilter.class);
     private static final String QUERY_PREFIX = "/api/v1/dlr/";
+    /** Captured webhook requests (raw bodies, headers): same protection as the DLR query API. */
+    private static final String CAPTURE_PREFIX = "/api/v1/webhooks/";
 
     private final DlrProperties properties;
     private final CallbackAuthenticator authenticator;
@@ -47,7 +49,7 @@ public class CallbackAuthenticationFilter extends OncePerRequestFilter {
 
         boolean callback = sec.getCallbackPaths().contains(path);
         if (!sec.isEnabled() || !callback) {
-            if (sec.isEnabled() && sec.isProtectQueryApi() && path.startsWith(QUERY_PREFIX)
+            if (sec.isEnabled() && sec.isProtectQueryApi() && (path.startsWith(QUERY_PREFIX) || path.startsWith(CAPTURE_PREFIX))
                     && !authenticator.queryApiKeyValid(request)) {
                 metrics.authFailed("query_api_key");
                 write(response, 401, "missing or invalid API key");

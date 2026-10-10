@@ -46,8 +46,11 @@ class DlrFlatPayloadAndReprocessIntegrationTest extends AbstractIntegrationTest 
         postDlr("{\"message_id\":\"odd-1\",\"state\":\"whatever\"}", Map.of());
         JsonNode r = getJson("/api/v1/dlr/odd-1");
         assertThat(r.get("received").asBoolean()).isFalse();
-        assertThat(r.get("rejected_events").asInt()).isEqualTo(1);
-        assertThat(r.get("last_rejection_reason").asText()).startsWith("unable to determine DLR source");
+        assertThat(r.get("status").asText()).isEqualTo("PENDING");
+        // not a DLR: visible as a capture, not as a rejected DLR
+        assertThat(r.get("rejected_events")).isNull();
+        assertThat(r.at("/captures/total").asInt()).isEqualTo(1);
+        assertThat(r.at("/captures/latest_interpretation_status").asText()).isEqualTo("UNRECOGNIZED");
     }
 
     @Test
@@ -86,8 +89,9 @@ class DlrFlatPayloadAndReprocessIntegrationTest extends AbstractIntegrationTest 
                 VALUES ('UNKNOWN', CAST(? AS jsonb), 'REJECTED', 'old version')""", TestPayloads.DEFAULT_SMS_FLAT_EXAMPLE);
 
         JsonNode r = readJson(postDlr("/api/v1/dlr/events/rejected/reprocess?limit=10", "", Map.of()).body());
-        assertThat(r.get("attempted").asInt()).isEqualTo(3);
-        assertThat(r.get("skipped").asInt()).isEqualTo(1);
+        // "{broken" is now only a capture (not a rejected DLR), so only two rows are candidates
+        assertThat(r.get("attempted").asInt()).isEqualTo(2);
+        assertThat(r.get("skipped").asInt()).isZero();
         assertThat(r.get("still_rejected").asInt()).isEqualTo(1);
         assertThat(r.get("applied").asInt()).isEqualTo(1);
 

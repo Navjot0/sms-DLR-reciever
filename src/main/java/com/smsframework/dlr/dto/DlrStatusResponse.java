@@ -46,13 +46,32 @@ public record DlrStatusResponse(
         /* Short-link click summary. Always present once a status DLR is received; otherwise only when clicked. */
         ClickSummary clicks,
         /* The DLR exactly as the provider / CPaaS sent it (for "<id>:<n>": that recipient's own DLR). */
-        com.fasterxml.jackson.databind.JsonNode dlr) {
+        com.fasterxml.jackson.databind.JsonNode dlr,
+        /* Raw webhook captures that carry this message id (set when there are any; see /api/v1/webhooks). */
+        CaptureSummary captures) {
+
+    /**
+     * Webhook requests captured for this message id. A capture is NOT a DLR: unrecognised payloads never change
+     * received / status; automation can open them with GET /api/v1/webhooks/requests/{capture_id}.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record CaptureSummary(long total, java.util.Map<String, Long> byInterpretationStatus,
+                                 String latestCaptureId, String latestInterpretationStatus,
+                                 OffsetDateTime latestReceivedAt) {
+    }
+
+    public DlrStatusResponse withCaptures(CaptureSummary cs) {
+        return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
+                errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
+                requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, dlr, cs);
+    }
 
     public DlrStatusResponse withDlr(com.fasterxml.jackson.databind.JsonNode d) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, d);
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, d, captures);
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -67,34 +86,34 @@ public record DlrStatusResponse(
     public static DlrStatusResponse notReceived(String messageId, Integer rejectedEvents, String lastRejectionReason) {
         return new DlrStatusResponse(messageId, null, false, null, "PENDING", null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                rejectedEvents, lastRejectionReason, null, null, null, null, null);
+                rejectedEvents, lastRejectionReason, null, null, null, null, null, null);
     }
 
     public DlrStatusResponse withEvents(List<DlrEventView> ev) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, ev,
-                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, dlr);
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, clicks, dlr, captures);
     }
 
     public DlrStatusResponse withBilling(BillingSummary b) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, b, parts, requestedId, clicks, dlr);
+                rejectedEvents, lastRejectionReason, b, parts, requestedId, clicks, dlr, captures);
     }
 
     public DlrStatusResponse withParts(List<PartStatus> p, String requested) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, billing, p, requested, clicks, dlr);
+                rejectedEvents, lastRejectionReason, billing, p, requested, clicks, dlr, captures);
     }
 
     public DlrStatusResponse withClicks(ClickSummary c) {
         return new DlrStatusResponse(messageId, source, received, providerStatus, status, statusCode, errorCode,
                 errorReason, mobile, units, receivedAt, submitAt, correlationId, externalMessageId, campaignId,
                 requestId, sender, templateId, eventCount, duplicateCount, firstReceivedAt, statusUpdatedAt, events,
-                rejectedEvents, lastRejectionReason, billing, parts, requestedId, c, dlr);
+                rejectedEvents, lastRejectionReason, billing, parts, requestedId, c, dlr, captures);
     }
 }

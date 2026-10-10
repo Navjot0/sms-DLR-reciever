@@ -114,7 +114,7 @@ class RcsPlatformWebhookIntegrationTest extends AbstractIntegrationTest {
         String broken = """
                 {"event_type":"message_delivery","message_id":"rcs-rej-1","external_message_id":"x",
                  "message":{"direction":"outbound","number":"919000000001"},"agent":{"name":"viagent"}}""";
-        assertThat(postDlr(broken, Map.of()).statusCode()).isEqualTo(400);
+        assertThat(postDlr(broken, Map.of()).statusCode()).isEqualTo(200);
 
         java.net.http.HttpResponse<String> r = get("/api/v1/dlr/rcs-rej-1/json");
         assertThat(r.statusCode()).isEqualTo(200);

@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Deletes data older than dlr.retention.days (default 7): status DLRs, message states, billing events and
+ * Deletes data older than dlr.retention.days (default 7): raw webhook captures, status DLRs, message states, billing events and
  * short-link clicks. Runs on every instance on a timer; deletes are done in small batches, each its own
  * transaction, so callbacks are never blocked and two instances running at once only split the work.
  */
@@ -77,6 +77,11 @@ public class DataRetentionService {
         more |= batch("dlr_click_events", deleted, p, """
                 DELETE FROM dlr_click_events WHERE id IN (
                     SELECT id FROM dlr_click_events WHERE created_at < :cutoff ORDER BY id LIMIT :n)""");
+
+        // 4. raw webhook captures (immutable request log)
+        more |= batch("webhook_requests", deleted, p, """
+                DELETE FROM webhook_requests WHERE id IN (
+                    SELECT id FROM webhook_requests WHERE received_at < :cutoff ORDER BY id LIMIT :n)""");
 
         long total = deleted.values().stream().mapToLong(Long::longValue).sum();
         return new Result(config.isEnabled(), days, cutoff, deleted, total, more);

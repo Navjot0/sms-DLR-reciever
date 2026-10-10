@@ -115,11 +115,12 @@ class DlrClickIntegrationTest extends AbstractIntegrationTest {
     @Test
     void invalidClickIsStoredAsRejected() {
         HttpResponse<String> r = postDlr("{\"event\":\"short_link\",\"data\":{\"message_id\":\"" + MSG + ":1\"}}", Map.of());
-        assertThat(r.statusCode()).isEqualTo(400);
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(readJson(r.body()).get("interpretation_status").asText()).isEqualTo("INVALID_DLR");
         Map<String, Object> row = jdbc.queryForMap("SELECT message_id, rejection_reason FROM dlr_events");
         assertThat(row.get("rejection_reason")).isEqualTo("short_link: data.url_key is missing");
         assertThat(row.get("message_id")).isEqualTo(MSG);
-        assertThat(postDlr(TestPayloads.CLICK_EXAMPLE, Map.of("X-DLR-Source", "WEBENGAGE")).statusCode()).isEqualTo(400);
+        assertThat(postDlr(TestPayloads.CLICK_EXAMPLE, Map.of("X-DLR-Source", "WEBENGAGE")).statusCode()).isEqualTo(200);
     }
 
     @Test

@@ -4,7 +4,10 @@ import com.smsframework.dlr.config.DlrProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
 
+import com.smsframework.dlr.capture.WebhookCaptureService;
+
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -31,13 +34,26 @@ public class SourceResolver {
                 return canonicalise(v);
             }
         }
+        // Query string only: request.getParameter() would also parse (and consume) a form-encoded body,
+        // which must reach the capture byte-for-byte.
+        Map<String, List<String>> query = WebhookCaptureService.parseQuery(request.getQueryString());
         for (String param : config.getQueryParams()) {
-            String v = request.getParameter(param);
+            List<String> values = query.get(param);
+            String v = values == null || values.isEmpty() ? null : values.get(0);
+            if (v == null && request.getQueryString() == null && !hasFormBody(request)) {
+                v = request.getParameter(param);   // e.g. parameters set programmatically; nothing to consume
+            }
             if (v != null && !v.isBlank()) {
                 return canonicalise(v);
             }
         }
         return null;
+    }
+
+    private static boolean hasFormBody(HttpServletRequest request) {
+        String ct = request.getContentType();
+        return ct != null && (ct.toLowerCase(Locale.ROOT).startsWith("application/x-www-form-urlencoded")
+                || ct.toLowerCase(Locale.ROOT).startsWith("multipart/"));
     }
 
     public boolean detectFromPayload() {

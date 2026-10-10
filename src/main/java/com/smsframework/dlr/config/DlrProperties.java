@@ -51,6 +51,7 @@ public class DlrProperties {
     private final Clicks clicks = new Clicks();
     private final Meta meta = new Meta();
     private final Retention retention = new Retention();
+    private final Capture capture = new Capture();
 
     // ------------------------------------------------------------------
 
@@ -342,6 +343,43 @@ public class DlrProperties {
     public Clicks getClicks() { return clicks; }
     public Meta getMeta() { return meta; }
     public Retention getRetention() { return retention; }
+    public Capture getCapture() { return capture; }
+
+    /**
+     * Universal webhook capture (webhook_requests): every callback is stored as received before any DLR
+     * interpretation. The body limit is dlr.api.max-payload-bytes.
+     */
+    public static class Capture {
+        /** HTTP status sent back once a callback is durably captured (whatever its format). */
+        private int ackStatus = 200;
+        /** Field names tried, in order, to find a message id in payloads no DLR adapter recognises. */
+        private List<String> messageIdFields = new ArrayList<>(List.of("message_id", "messageId", "msg_id", "msgId",
+                "messageID", "MessageId", "MessageID", "message-id", "xJob", "x-job"));
+        /** Field names tried, in order, to find a provider status in unrecognised payloads. */
+        private List<String> statusFields = new ArrayList<>(List.of("status", "Status", "message_status",
+                "delivery_status", "dlr_status", "deliveryStatus", "eventType", "event_type", "event-type", "state"));
+        /** Field names tried, in order, to find the recipient in unrecognised payloads. */
+        private List<String> recipientFields = new ArrayList<>(List.of("mobile", "msisdn", "recipient", "recipient_id",
+                "to", "toNumber", "number", "phone", "destination", "address", "email"));
+        /** How deep into nested objects the generic extractor looks. */
+        private int extractMaxDepth = 4;
+        /** Header values replaced by "***" in the stored capture (case-insensitive). */
+        private List<String> maskedHeaders = new ArrayList<>(List.of("authorization", "proxy-authorization", "cookie",
+                "set-cookie", "x-api-key", "x-auth-token", "x-access-token"));
+
+        public int getAckStatus() { return ackStatus; }
+        public void setAckStatus(int ackStatus) { this.ackStatus = ackStatus; }
+        public List<String> getMessageIdFields() { return messageIdFields; }
+        public void setMessageIdFields(List<String> messageIdFields) { this.messageIdFields = messageIdFields; }
+        public List<String> getStatusFields() { return statusFields; }
+        public void setStatusFields(List<String> statusFields) { this.statusFields = statusFields; }
+        public List<String> getRecipientFields() { return recipientFields; }
+        public void setRecipientFields(List<String> recipientFields) { this.recipientFields = recipientFields; }
+        public int getExtractMaxDepth() { return extractMaxDepth; }
+        public void setExtractMaxDepth(int extractMaxDepth) { this.extractMaxDepth = extractMaxDepth; }
+        public List<String> getMaskedHeaders() { return maskedHeaders; }
+        public void setMaskedHeaders(List<String> maskedHeaders) { this.maskedHeaders = maskedHeaders; }
+    }
 
     /** Automatic deletion of old data. */
     public static class Retention {

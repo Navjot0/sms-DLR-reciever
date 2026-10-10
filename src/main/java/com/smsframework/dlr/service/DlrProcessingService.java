@@ -55,6 +55,10 @@ public class DlrProcessingService {
 
     private static final Logger log = LoggerFactory.getLogger(DlrProcessingService.class);
     static final String UNKNOWN_SOURCE = "UNKNOWN";
+    /** {@link ProcessingResult#note()} of an UNRECOGNIZED result: what kind of payload it was. */
+    public static final String UNRECOGNIZED_EMPTY = "EMPTY";
+    public static final String UNRECOGNIZED_MALFORMED = "MALFORMED";
+    public static final String UNRECOGNIZED_UNKNOWN = "UNKNOWN_FORMAT";
     private static final List<String> MDC_KEYS = List.of("source", "message_id", "correlation_id", "mobile",
             "provider_status", "normalized_status", "processing_status");
 
@@ -172,7 +176,7 @@ public class DlrProcessingService {
 
         // 2. Parse JSON ------------------------------------------------------------------------------
         if (body == null || body.isBlank()) {
-            return reject(hintedSource, null, "{\"_empty_body\": true}", "request body is empty", false);
+            return unrecognized(hintedSource, null, UNRECOGNIZED_EMPTY, "request body is empty");
         }
         String rawForStorage = sanitize(body);
         JsonNode json;
@@ -182,15 +186,13 @@ public class DlrProcessingService {
                 throw new IllegalArgumentException("no JSON content");
             }
         } catch (Exception e) {
-            ObjectNode wrapped = objectMapper.createObjectNode();
-            wrapped.put("_unparseable_body", rawForStorage);
-            return reject(hintedSource, null, wrapped.toString(), "malformed JSON payload", false);
+            return unrecognized(hintedSource, null, UNRECOGNIZED_MALFORMED, "body is not valid JSON");
         }
 
         // 3. Resolve provider adapter -----------------------------------------------------------------
         if (explicitSource != null && !adapters.isKnownSource(explicitSource)) {
-            return reject(explicitSource, null, rawForStorage, "unsupported DLR source: " + explicitSource
-                    + " (supported: " + adapters.sources() + ")", false);
+            return unrecognized(explicitSource, adapters.peekMessageId(json), UNRECOGNIZED_UNKNOWN,
+                    "no DLR adapter for source " + explicitSource + " (supported: " + adapters.sources() + ")");
         }
 
         // 3a. Short-link click ({"event":"short_link","data":{...}}) ----------------------------------
@@ -223,14 +225,14 @@ public class DlrProcessingService {
         }
 
         if (explicitSource == null && !sourceResolver.detectFromPayload()) {
-            return reject(UNKNOWN_SOURCE, null, rawForStorage,
-                    "DLR source not specified and payload detection is disabled", false);
+            return unrecognized(UNKNOWN_SOURCE, adapters.peekMessageId(json), UNRECOGNIZED_UNKNOWN,
+                    "DLR source not specified and payload detection is disabled");
         }
         Optional<DlrProviderAdapter> adapterOpt = adapters.find(explicitSource, json);
         if (adapterOpt.isEmpty()) {
-            // Keep whatever message id we can find so automation can still see the rejection for that message.
-            return reject(UNKNOWN_SOURCE, adapters.peekMessageId(json), rawForStorage,
-                    "unable to determine DLR source from headers, query parameters or payload structure", false);
+            // Not a DLR format we know: the raw request is kept as a webhook capture, no DLR is recorded.
+            return unrecognized(UNKNOWN_SOURCE, adapters.peekMessageId(json), UNRECOGNIZED_UNKNOWN,
+                    "payload structure not recognised by any DLR adapter");
         }
         DlrProviderAdapter adapter = adapterOpt.get();
 
@@ -426,6 +428,16 @@ public class DlrProcessingService {
                 src, messageId, id, reason);
         return new ProcessingResult(id, event.getSource(), messageId, ProcessingStatus.REJECTED, null, null, reason,
                 null, tooLarge, null, null, null);
+    }
+
+    /** A payload no adapter understands: nothing is written to dlr_events (the capture keeps the request). */
+    private ProcessingResult unrecognized(String source, String messageId, String kind, String reason) {
+        String src = source == null ? UNKNOWN_SOURCE : source;
+        String mid = MessageIdParts.base(messageId, properties.getMessageIdPartSeparator());
+        metrics.unrecognized(adapters.isKnownSource(src) ? src : UNKNOWN_SOURCE);
+        log.info("Webhook payload not interpreted as DLR source={} kind={} reason=\"{}\"", src, kind, reason);
+        return new ProcessingResult(null, src, mid, ProcessingStatus.UNRECOGNIZED, null, null, reason, kind, false,
+                null, null, null);
     }
 
     private ProcessingResult result(Long eventId, NormalizedDlr dlr, ProcessingStatus ps, String currentStatus, String note) {

@@ -35,6 +35,11 @@ class DlrSecurityIntegrationTest extends AbstractIntegrationTest {
                 "X-DLR-Signature", "sha256=" + sign(body)));
         assertThat(r.statusCode()).isEqualTo(200);
         assertThat(getJson("/api/v1/dlr/sec-ok").get("status").asText()).isEqualTo("DELIVERED");
+        // the HMAC filter buffered the body; the capture still has the exact bytes, credentials masked
+        assertThat(jdbc.queryForObject("SELECT convert_from(raw_body, 'UTF8') FROM webhook_requests", String.class))
+                .isEqualTo(body);
+        assertThat(jdbc.queryForObject("SELECT headers->'x-api-key'->>0 FROM webhook_requests", String.class))
+                .isEqualTo("***");
     }
 
     @Test
@@ -43,6 +48,8 @@ class DlrSecurityIntegrationTest extends AbstractIntegrationTest {
         var r = postDlr(body, Map.of("X-DLR-Signature", sign(body)));
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM dlr_events", Integer.class)).isZero();
+        // an authentication failure is not a capture
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM webhook_requests", Integer.class)).isZero();
     }
 
     @Test
@@ -51,6 +58,7 @@ class DlrSecurityIntegrationTest extends AbstractIntegrationTest {
         var r = postDlr(body, Map.of("X-API-Key", "test-key-1", "X-DLR-Signature", sign(body + " ")));
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(readJson(r.body()).get("message").asText()).isEqualTo("invalid signature");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM webhook_requests", Integer.class)).isZero();
     }
 
     @Test

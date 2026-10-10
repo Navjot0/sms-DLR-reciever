@@ -1,6 +1,8 @@
 # SMS DLR Receiver
 
-A generic, stateless service that **receives, validates, normalizes, correlates and persists** SMS delivery reports (DLRs) from multiple providers, and exposes query APIs that SMS automation uses to verify delivery.
+A generic, stateless service that **captures every webhook it receives** (any provider, any format) and then **validates, normalizes, correlates and persists** the delivery reports (DLRs) it recognises, exposing query APIs that automation uses to verify delivery.
+
+> **Universal webhook capture.** Every request to `/api/v1/dlr/receive` is stored first, exactly as received (method, path, query, headers, content type, the body byte for byte), whatever its format: JSON, malformed JSON, text, XML, form data, binary or empty. Interpretation as a DLR happens afterwards and is best effort. A payload the receiver does not recognise is a **successful capture**, not a rejected DLR. See [Universal webhook capture](#universal-webhook-capture).
 
 > **The receiver is the source of truth for DLR verification.**
 > An HTTP 200 on the DLR callback does not mean a test passes. A test passes only when the expected DLR has been received, correlated by `message_id`, persisted in PostgreSQL, and read back through `GET /api/v1/dlr/{messageId}` or `POST /api/v1/dlr/verify`.
@@ -14,6 +16,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [Quick start](#quick-start)
 - [Live UI](#live-ui)
 - [Architecture](#architecture)
+- [Universal webhook capture](#universal-webhook-capture)
 - [API](#api)
 - [Normalization and status mapping](#normalization-and-status-mapping)
 - [Correlation](#correlation)
@@ -116,6 +119,7 @@ The page is served by the receiver itself and needs no build step or external as
 | **Live feed** | Incoming status DLRs, billing events and clicks, newest first. New rows are highlighted. You can filter by category, show or hide billing, filter by status, and search by message id, mobile or status. Clicking a message id opens the lookup |
 | **Message lookup** | One message, with or without `:part`: delivery state and parts, billing summary, click summary, and every callback as a timeline with its raw JSON. It can auto-refresh. `/ui/?message_id=<id>` links directly to it |
 | **Bulk verify** | Paste ids and choose the expected status, require billing and/or require click. Shows PASS/FAIL, the counts, and a row per id with missing ids marked |
+| **Incoming requests** | Every HTTP request captured on the callback endpoint, newest first, whatever its format: capture id, time, method and path, content type and size, extracted message id, source and interpretation (✓ DLR / unrecognized / malformed JSON / invalid DLR / error) next to the DLR status. Filter by interpretation, search by capture id, message id, body text or header value, load older pages. Selecting a row opens the capture: **Raw body** (exact text, base64 for binary), **JSON** (formatted, with a raw-text fallback when it does not parse), **Headers**, **Query**, **Interpretation**, plus **Copy original body** (fetched from `/raw`, byte-exact), **Copy as JSON** (only enabled for valid JSON) and **Download body**. Pause/Resume and the refresh interval apply to it too |
 
 If a whole billing callback could not be processed, the Billing tile shows a warning with the count. Duplicate and invalid (unparseable) callbacks are not counted or shown in the UI. They are still stored, and the `/api/v1/dlr/events/rejected` and reprocess APIs still work.
 
@@ -123,6 +127,7 @@ The UI reads these endpoints:
 
 - `GET /api/v1/dlr/live/feed?after_status=&after_billing=&after_click=&limit=` returns the newest events across the three tables plus a cursor. Passing the cursor back returns only newer events.
 - `GET /api/v1/dlr/live/message?id=<id>:<n>` returns one recipient's status, billing, clicks and callbacks, plus a per-status count of all recipients of the message. Bulk campaigns use one message_id for every recipient, with `:<n>` per recipient. Without `:<n>` it returns the whole message.
+- `GET /api/v1/webhooks/requests?after_id=&status=&q=&before_id=&limit=` returns captured requests (Incoming requests tab).
 - `GET /api/v1/dlr/live/stats?minutes=60` returns the totals, one entry per category (`DEFAULT_SMS`, `WEBENGAGE`, `SHORT_URL`) and the chart series. `minutes=0` means all time.
 
 Both read from PostgreSQL. The UI polls them rather than using server push, so it shows the same data on every instance behind a load balancer.
@@ -134,14 +139,18 @@ With `DLR_PROTECT_QUERY_API=true`, click **API key** in the header and enter a k
 ## Architecture
 
 ```text
-Provider / SMS gateway / simulator
-        │  POST /api/v1/dlr/receive   (X-DLR-Source: DEFAULT_SMS | WEBENGAGE | …)
+Provider / SMS gateway / any webhook sender
+        │  any method · any content type → /api/v1/dlr/receive   (X-DLR-Source optional)
         ▼
 CallbackAuthenticationFilter   API key · Bearer · IP allowlist · HMAC (configurable, all off locally)
+        ▼                      (auth failures are answered 401/403 and NOT captured)
+DlrReceiverController          reads the body as bytes (bounded by DLR_MAX_PAYLOAD_BYTES)
         ▼
-DlrReceiverController          raw body (so malformed JSON can still be stored)
+WebhookCaptureService
+   ├─ 1. capture  ───────────► webhook_requests (committed first; DB down → 503, nothing acknowledged)
+   └─ 2. interpret ──────────► result written back on the capture (interpretation_status, message ids, …)
         ▼
-DlrProcessingService           provider-independent pipeline
+DlrProcessingService           provider-independent DLR pipeline (unchanged adapters)
    ├─ SourceResolver           header → query param → payload structure detection
    ├─ event_type = "billing"? ─► DefaultBillingDlrAdapter ─► BillingProcessingService ─► dlr_billing_events
    ├─ DlrAdapterRegistry ──►  DlrProviderAdapter
@@ -156,6 +165,7 @@ DlrProcessingService           provider-independent pipeline
    └─ repositories             one DB transaction
         ▼
 PostgreSQL
+   ├─ webhook_requests         every request, raw bytes + headers + query, immutable; derived interpretation
    ├─ dlr_events               every callback: APPLIED / IGNORED / DUPLICATE / REJECTED + raw_payload
    └─ dlr_message_status       current state per message_id  ◄── GET /api/v1/dlr/{id}, POST /verify
    └─ dlr_billing_events       every billing event, joined by message_id ◄── billing summary in the same APIs
@@ -163,7 +173,8 @@ PostgreSQL
 
 Design choices:
 
-- **Two tables.** `dlr_events` is an append-only audit log of every callback, including its raw payload. `dlr_message_status` holds one row per `message_id` with the state resolved by the state machine. Automation reads the second table. Debugging reads the first.
+- **Raw capture is separate from interpretation.** `webhook_requests` keeps what was sent; the DLR tables keep what it meant. Unrecognised payloads only ever live in `webhook_requests`, so they can never mark a message as delivered.
+- **Two DLR tables.** `dlr_events` is an append-only audit log of every callback, including its raw payload. `dlr_message_status` holds one row per `message_id` with the state resolved by the state machine. Automation reads the second table. Debugging reads the first.
 - **Explicit SQL (Spring JDBC) instead of an ORM.** Idempotency and concurrency depend on `INSERT … ON CONFLICT` and `SELECT … FOR UPDATE`, so they are written out explicitly.
 - **No in-memory state.** Every decision is made inside PostgreSQL, so any number of instances can run behind a load balancer.
 
@@ -171,7 +182,9 @@ Design choices:
 
 ```text
 src/main/java/com/smsframework/dlr
-├── controller   DlrReceiverController, DlrQueryController
+├── controller   DlrReceiverController, DlrQueryController, WebhookCaptureController
+├── capture      WebhookCaptureService, WebhookCaptureRepository, GenericFieldExtractor,
+│                CapturedRequest, Interpretation, InterpretationStatus
 ├── service      DlrProcessingService, DlrQueryService, StatusNormalizer, DlrStateMachine,
 │                DedupKeyGenerator, SourceResolver, DlrMetrics
 ├── adapter      DlrProviderAdapter, AbstractJsonDlrAdapter, DefaultSmsDlrAdapter,
@@ -200,11 +213,91 @@ Dockerfile, docker-compose.yml, .env.example
 
 ---
 
+## Universal webhook capture
+
+`/api/v1/dlr/receive` accepts **any** request: `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, any `Content-Type` (or none), any body. No source header is needed. Two steps run for every request:
+
+1. **Capture.** The request is written to `webhook_requests` and committed: method, path, raw query string and parsed parameters (repeated names kept), all headers (names lower-cased, credentials masked), content type, body size, the **exact body bytes** (`BYTEA`, never parsed and re-serialised, so duplicate keys, whitespace, key order, escapes and line endings are kept) and the sender address. Only after the commit is the request acknowledged. If the database is unavailable the answer is **503** and nothing is acknowledged, so the sender retries.
+2. **Interpret.** The existing DLR pipeline runs over the body (Default SMS, WebEngage, Meta, RCS, email, billing, short-link clicks). The outcome is written next to the capture: `interpretation_status`, detected source, message id(s), recipient, provider status, normalized status (only when a DLR adapter produced one) and the `dlr_events` row it created.
+
+| `interpretation_status` | Meaning |
+|---|---|
+| `INTERPRETED` | A known DLR format; processed as before (`APPLIED` / `IGNORED` / `DUPLICATE`) |
+| `PARTIAL` | Batch callback (Meta, email, billing) where some items were invalid |
+| `INVALID_DLR` | Recognised DLR format with invalid content; stored in `dlr_events` as `REJECTED` as before |
+| `NO_DLR` | Known webhook without delivery statuses (e.g. Meta inbound message, SNS confirmation) |
+| `UNRECOGNIZED` | Valid JSON that no adapter recognises (or an unknown `X-DLR-Source`) |
+| `MALFORMED_JSON` | Looks like JSON (JSON content type or starts with `{` / `[`) but does not parse |
+| `NOT_JSON` | Text, XML, form data or binary |
+| `EMPTY` | No body |
+| `TOO_LARGE` | Body above `DLR_MAX_PAYLOAD_BYTES`: metadata recorded, body not stored, answered 413 |
+| `ERROR` | Unexpected error while interpreting; the capture itself is kept |
+
+**Unknown payloads never produce a DLR status.** They are not written to `dlr_events`, so `GET /api/v1/dlr/{id}` keeps `received: false` / `PENDING` and `POST /verify` does not pass. Their provider status is stored exactly as sent (`provider_status`) and never normalized.
+
+**Generic extractor.** For payloads no adapter knows, the receiver still looks for a message id, status and recipient in JSON (breadth-first, up to `extract-max-depth` levels, arrays included) and in form fields, using the configurable field lists `dlr.capture.message-id-fields` / `status-fields` / `recipient-fields`. **`id` is deliberately not a message-id field**: in most webhooks it is the sender's own event id. With duplicate JSON keys the extractor sees the last value (the raw body keeps all of them). For `<id>:<n>` both `<id>:<n>` and `<id>` are recorded, so `?message_id=<id>` finds every capture of the message and `?message_id=<id>:<n>` only that recipient's.
+
+**Capture ID vs message ID.** A `capture_id` (UUID, returned in the `X-Capture-Id` response header and the ack body) identifies one HTTP request received by this service. A `message_id` is the platform's id found inside a payload. One message usually has several captures (sent, delivered, billing, …); a capture may carry no message id at all. Use capture ids to inspect what was sent, and message ids with `/api/v1/dlr/{message_id}` and `/verify` for delivery state.
+
+### Acknowledgement
+
+| Code | Meaning |
+|---|---|
+| `DLR_CAPTURE_ACK_STATUS` (default **200**) | Captured and committed, whatever the interpretation (also for invalid or unrecognised DLRs). Headers `X-Capture-Id`, `X-Interpretation-Status` |
+| 413 | Body larger than `DLR_MAX_PAYLOAD_BYTES`. Body not stored, `captured: false` (request metadata is recorded as `TOO_LARGE`) |
+| 401 / 403 | Authentication failed. **Not** captured |
+| 503 | Database unavailable. **Not** acknowledged; the sender should retry |
+
+```bash
+curl -i -X POST 'localhost:8080/api/v1/dlr/receive?trace=abc' -H 'Content-Type: application/json' \
+  --data-binary '{"event":"delivered","data":{"msgId":"demo-77:1","deliveryStatus":"DELIVERED"}}'
+```
+
+```text
+HTTP/1.1 200
+X-Capture-Id: 5d3c9ab1-a6d1-4eaf-bba4-b65d61cfa1cb
+X-Interpretation-Status: UNRECOGNIZED
+
+{"source":"UNKNOWN","processing_status":"UNRECOGNIZED","note":"payload structure not recognised by any DLR adapter",
+ "captured":true,"capture_id":"5d3c9ab1-…","interpretation_status":"UNRECOGNIZED","extracted_message_id":"demo-77:1"}
+```
+
+Known DLRs keep their previous ack bodies (status DLR, Meta / email batch, billing, click) with `captured`, `capture_id`, `interpretation_status` and `extracted_message_id` added to the status-DLR ack.
+
+### Capture API
+
+Protected like the DLR query API (`DLR_PROTECT_QUERY_API=true` requires `X-API-Key`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/webhooks/requests` | Newest first. `after_id` (live polling: only newer), `before_id` (older pages), `status`, `source`, `message_id`, `q`, `limit` (≤200). Returns `items`, `cursor`, `next_before_id` |
+| `GET` | `/api/v1/webhooks/requests/search?q=…` | `q` matches a capture id, a message id, or text in the body, headers or query string |
+| `GET` | `/api/v1/webhooks/requests/latest?message_id=…` | Newest capture (optionally for one message id), full detail |
+| `GET` | `/api/v1/webhooks/requests/{captureId}` | Full detail: query params, headers, `body_text` (or `body_base64` for binary), message ids, interpretation |
+| `GET` | `/api/v1/webhooks/requests/{captureId}/raw` | The body **exactly as received** (same bytes) with its original `Content-Type` |
+
+`status` also accepts the groups `interpreted` (`INTERPRETED`, `PARTIAL`), `unrecognized` (`UNRECOGNIZED`, `NOT_JSON`, `EMPTY`, `NO_DLR`) and `errors` (`ERROR`, `TOO_LARGE`, `PENDING`).
+
+```bash
+curl 'localhost:8080/api/v1/webhooks/requests?message_id=demo-77&limit=10'
+curl  localhost:8080/api/v1/webhooks/requests/5d3c9ab1-a6d1-4eaf-bba4-b65d61cfa1cb
+curl  localhost:8080/api/v1/webhooks/requests/5d3c9ab1-a6d1-4eaf-bba4-b65d61cfa1cb/raw
+```
+
+**Existing automation APIs** are unchanged for recognised DLRs. Additions:
+
+- `GET /api/v1/dlr/{id}` adds `captures` (`total`, `by_interpretation_status`, `latest_capture_id`, `latest_interpretation_status`, `latest_received_at`) when requests carrying that id were captured. It never changes `received` / `status`.
+- `GET /api/v1/dlr/{id}/json`: when no DLR (accepted or rejected) exists, it falls back to the newest **uninterpreted** capture for that id and returns its body exactly as received with its original content type and `X-DLR-Processing-Status: UNRECOGNIZED`, `X-Capture-Id`. `?all=true` and `?status=` still return DLRs only.
+- Python helpers: `list_captures`, `get_capture`, `get_capture_raw`, `get_latest_capture`, `wait_for_capture`, `send_raw_request` in `automation/dlr_helper.py`.
+
+---
+
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/dlr/receive` | Generic callback endpoint for every provider, for status and billing DLRs |
+| any | `/api/v1/dlr/receive` | Universal callback endpoint: captures every request, then interprets known DLRs (status, billing, clicks, Meta, RCS, email) |
+| `GET` | `/api/v1/webhooks/requests…` | Raw webhook captures (see [Capture API](#capture-api)) |
 | `GET` | `/api/v1/dlr/{messageId}` | Current DLR for a message (`?include_events=true` adds the history) |
 | `POST` | `/api/v1/dlr/verify` | Bulk verification for automation |
 | `GET` | `/api/v1/dlr/{messageId}/events` | Every callback for a message, with raw payloads |
@@ -242,15 +335,7 @@ curl -X POST localhost:8080/api/v1/dlr/receive \
  "note":"first DLR for message"}
 ```
 
-Response codes. These are meant for the provider. Automation must not depend on them.
-
-| Code | Meaning |
-|---|---|
-| 200 | Persisted as `APPLIED`, `IGNORED` or `DUPLICATE` |
-| 400 | Persisted as `REJECTED`: invalid, malformed or unsupported source. Tells the provider not to retry. Configurable with `dlr.api.rejected-http-status` |
-| 413 | Body larger than `dlr.api.max-payload-bytes`. Persisted as `REJECTED` with the first 4 KB |
-| 401 / 403 | Authentication failed. **Not** persisted |
-| 503 | Database unavailable. The provider should retry. Retrying is safe because of idempotency |
+Response codes are meant for the sender; automation must not depend on them. Every request that is captured is answered with `DLR_CAPTURE_ACK_STATUS` (default 200), **including** invalid and unrecognised DLRs (previously 400). See [Acknowledgement](#acknowledgement) for 413 / 401 / 403 / 503. `dlr.api.rejected-http-status` is no longer used by this endpoint.
 
 ### `GET /api/v1/dlr/{messageId}`
 
@@ -437,19 +522,25 @@ The integration tests send 60 messages × 3 callbacks (`SUBMITTED`, final, `SUBM
 | Default SMS | `message_id`, `mobile`, `status` (inside `payload` for the wrapped form) | `entity_id`, `template_id`, `correlation_id`, … |
 | WebEngage | `messageId`, `toNumber`, `status` | `statusCode`, `smsCount`, `version` |
 
-Field lengths are also checked against the column sizes. Invalid callbacks are **never discarded**. They are stored with `processing_status = REJECTED`, a `rejection_reason`, and the complete raw payload:
+Field lengths are also checked against the column sizes. Every request is kept in `webhook_requests`. Payloads in a **recognised** DLR format that fail validation are additionally stored in `dlr_events` with `processing_status = REJECTED`, a `rejection_reason` and the raw payload (capture `interpretation_status = INVALID_DLR`):
 
 | Situation | `rejection_reason` |
 |---|---|
 | required field missing | `message_id is missing` (several reasons are joined with `; `) |
 | wrong JSON type | `invalid value for field 'payload.message_id'` |
-| not JSON | `malformed JSON payload` (raw text stored as `{"_unparseable_body": "…"}`) |
-| empty body | `request body is empty` |
-| unknown header source | `unsupported DLR source: ACME (supported: [DEFAULT_SMS, WEBENGAGE])` |
-| no source and structure not recognized | `unable to determine DLR source from headers, query parameters or payload structure` |
-| too large | `payload exceeds 10485760 bytes` (limit: `DLR_MAX_PAYLOAD_BYTES`) |
+| billing / click / batch item invalid | `billing: events is missing`, `short_link: data.url_key is missing`, … |
 
-When a rejected payload still contains a readable message id, it is stored in `message_id`, so `GET /api/v1/dlr/{id}` can report it. This also applies when the source could not be determined.
+Payloads that are **not** a recognised DLR are no longer `REJECTED` DLRs. They are captures only (no `dlr_events` row):
+
+| Situation | capture `interpretation_status` |
+|---|---|
+| not JSON / malformed JSON | `NOT_JSON` / `MALFORMED_JSON` |
+| empty body | `EMPTY` |
+| unknown `X-DLR-Source` (e.g. `ACME`) | `UNRECOGNIZED` |
+| no source and structure not recognised | `UNRECOGNIZED` |
+| too large | `TOO_LARGE` (413) |
+
+When a rejected DLR still contains a readable message id, it is stored in `message_id`, so `GET /api/v1/dlr/{id}` can report it (`rejected_events`, `last_rejection_reason`). Unrecognised payloads with a message id appear there under `captures`.
 
 ### Reprocessing rejected callbacks
 
@@ -671,7 +762,7 @@ Email delivery reports are posted to the same `POST /api/v1/dlr/receive`, in the
 
 ## Database
 
-The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`, `V3__multipart_message_ids.sql`, which adds `provider_message_id` and `part_number` to `dlr_events`, and `V4__create_dlr_click_events.sql`).
+The schema is in `src/main/resources/db/migration/`. `V12__webhook_requests.sql` adds the capture table (see below). Earlier migrations: (`V1__create_dlr_tables.sql`, `V2__create_dlr_billing_events.sql`, `V3__multipart_message_ids.sql`, which adds `provider_message_id` and `part_number` to `dlr_events`, and `V4__create_dlr_click_events.sql`).
 
 - `dlr_events` has the columns you specified: `id`, `source`, `message_id`, `external_message_id`, `correlation_id`, `mobile`, `sender`, `service`, `provider_status`, `normalized_status`, `status_code`, `error_code`, `error_reason`, `submit_at`, `dlr_received_at`, `entity_id`, `template_id`, `units`, `raw_payload JSONB NOT NULL`, `processing_status`, `created_at`, `updated_at`. It adds `campaign_id`, `request_id`, `provider_event_id`, `rejection_reason`, `processing_note`, `dedup_key`, `duplicate_of` and `receiver_instance`.
   - `message_id` may be `NULL` **only** for `REJECTED` rows. A `CHECK` constraint enforces this, so a callback missing its id can still be stored.
@@ -679,9 +770,16 @@ The schema is in `src/main/resources/db/migration/` (`V1__create_dlr_tables.sql`
 - `dlr_message_status` has one row per `message_id` with the current state, `last_event_id`, `event_count`, `duplicate_count` and timestamps. It has the same secondary indexes.
 - `dlr_billing_events` (`V2__create_dlr_billing_events.sql`) has one row per billing event: `message_id`, `billing_message_id`, `part_number`, `transaction_type`, `product`, `units`, `sale_price`, `currency`, `surcharge`, `total_amount` (`NUMERIC(18,6)`), `raw_event` and `raw_payload` (JSONB), `processing_status` (`APPLIED` / `DUPLICATE` / `REJECTED`), `rejection_reason`, `dedup_key`, `duplicate_of` and `batch_id` / `batch_index`, which group the events of one callback.
 
+- `webhook_requests` (`V12__webhook_requests.sql`) has one row per HTTP request received on the callback endpoint: `capture_id` (UUID, unique), `received_at`, `http_method`, `request_path`, `query_string`, `query_params` (JSONB), `headers` (JSONB, credentials masked), `content_type`, `raw_body` (`BYTEA`, exact bytes, `NULL` when too large), `body_size_bytes`, `body_truncated`, `body_encoding`, `body_text` (decoded copy for search/display; NUL replaced), `remote_address`, and the derived `interpretation_status`, `interpretation_error`, `detected_source`, `extracted_message_id`, `message_ids` (`TEXT[]`), `extracted_recipient`, `provider_status`, `normalized_status`, `dlr_event_id`, `interpretation` (JSONB ack). Indexes: `received_at`, `extracted_message_id` (partial), GIN on `message_ids`, `(interpretation_status, id)`, `(detected_source, id)`. A trigger refuses any update of the captured request columns (`raw_body`, headers, query, …); only the derived columns can change.
+
 Useful queries:
 
 ```sql
+-- what arrived that no adapter understood (last hour)
+SELECT capture_id, received_at, content_type, interpretation_status, left(body_text, 200)
+FROM webhook_requests WHERE interpretation_status IN ('UNRECOGNIZED','MALFORMED_JSON','NOT_JSON')
+  AND received_at > now() - interval '1 hour' ORDER BY id DESC;
+
 -- full history of one message, raw payloads included
 SELECT id, processing_status, provider_status, processing_note, raw_payload
 FROM dlr_events WHERE message_id = '…' ORDER BY id;
@@ -709,7 +807,7 @@ SELECT source, provider_status, count(*) FROM dlr_events WHERE normalized_status
 
 ## Data retention
 
-Old data is deleted automatically. By default, anything older than **7 days** is removed: status DLRs (`dlr_events`), message states (`dlr_message_status`), billing events and short-link clicks.
+Old data is deleted automatically. By default, anything older than **7 days** is removed: raw webhook captures (`webhook_requests`, by `received_at`), status DLRs (`dlr_events`), message states (`dlr_message_status`), billing events and short-link clicks.
 
 - The clean-up runs one minute after start-up and then every hour, on every instance. It deletes in batches of 5,000 rows, each in its own short transaction, so incoming callbacks are not blocked.
 - A message state is deleted once it has received nothing for 7 days. An old event that still backs the current status of an active message is kept until that message itself ages out.
@@ -871,7 +969,13 @@ The full, commented configuration is in `src/main/resources/application.yml`, wi
 | `DLR_RETENTION_DAYS` | `7` | Data older than this many days is deleted automatically (see [Data retention](#data-retention)) |
 | `DLR_META_VERIFY_TOKEN` | – | Token for Meta's callback URL check (`GET /api/v1/dlr/receive?hub.mode=subscribe…`) |
 | `DLR_BILLING_ENABLED` | `true` | Accept billing DLRs (other billing settings are under `dlr.billing` in `application.yml`) |
-| `DLR_MAX_PAYLOAD_BYTES` | `10485760` | Max callback body (10 MB). Bulk-campaign billing callbacks carry one event per recipient, about 200 bytes each |
+| `DLR_MAX_PAYLOAD_BYTES` | `10485760` | Max callback body (10 MB); larger bodies get 413 and are not stored. Bulk-campaign billing callbacks carry one event per recipient, about 200 bytes each |
+| `DLR_CAPTURE_ACK_STATUS` | `200` | Status answered once a request is captured (any interpretation) |
+| `DLR_CAPTURE_MESSAGE_ID_FIELDS` | `message_id,messageId,msg_id,…` | Field names the generic extractor tries for a message id in unrecognised payloads (`id` is not included on purpose) |
+| `DLR_CAPTURE_STATUS_FIELDS` / `DLR_CAPTURE_RECIPIENT_FIELDS` | see `application.yml` | Same for status and recipient |
+| `DLR_CAPTURE_MASKED_HEADERS` | `authorization,proxy-authorization,cookie,…` | Header values stored as `***` (the API-key header is always masked) |
+| `DLR_TRUST_FORWARDED_FOR` | `false` | Use `X-Forwarded-For` as the sender address (only behind a trusted proxy) |
+| `DLR_PROTECT_QUERY_API` | `false` | Require `X-API-Key` for the query APIs, the capture API and the raw bodies |
 | `DLR_BILLING_MAX_EVENTS` | `50000` | Max events in one billing callback |
 | `DLR_DETECT_FROM_PAYLOAD` | `true` | Allow detecting the source from the payload structure when no header or parameter is sent |
 | `DLR_AUTH_ENABLED` … | see [Security](#security) | Callback authentication |

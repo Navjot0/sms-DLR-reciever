@@ -110,6 +110,7 @@
   .rawc { display: inline-flex; align-items: flex-start; gap: 6px; }
   .copy-btn { font-size: 11px; padding: 1px 7px; line-height: 1.5; white-space: nowrap; }
   .copy-btn.ok { color: var(--good-ink); border-color: var(--good); }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
   .copy-btn.fail { color: var(--critical-ink); border-color: var(--critical); }
   details.raw pre { max-width: 520px; white-space: pre-wrap; word-break: break-all; }
   .tiles .tile .value.good { color: var(--good-ink); } .tiles .tile .value.bad { color: var(--critical-ink); }
@@ -126,6 +127,18 @@
   .meter { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); margin: 12px 0 4px; gap: 2px; }
   .meter span { display: block; height: 100%; }
   .meter-legend { font-size: 12px; color: var(--text-2); }
+  /* incoming requests */
+  #incBody tr { cursor: pointer; }
+  #incBody tr.sel td { background: var(--surface-2); }
+  #incBody td:nth-child(-n+3) { white-space: nowrap; }
+  .incd { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .incd h3 { margin: 0 0 8px; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .subtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 10px 0 0; flex-wrap: wrap; }
+  .subtab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 10px; color: var(--text-2); font-size: 13px; }
+  .subtab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .incd pre.body { max-height: 420px; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
+  .note { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
   @media (max-width: 640px) { header, main { padding-left: 12px; padding-right: 12px; } dl.kv { grid-template-columns: 110px 1fr; } }
 </style>
 </head>
@@ -174,6 +187,7 @@
       <button class="tab active" data-tab="feed">Live feed</button>
       <button class="tab" data-tab="lookup">Message lookup</button>
       <button class="tab" data-tab="verify">Bulk verify</button>
+      <button class="tab" data-tab="incoming">Incoming requests</button>
     </div>
 
     <!-- Live feed -->
@@ -238,6 +252,35 @@
         <tbody id="verifyBody"></tbody></table></div>
     </div>
 
+    <!-- Incoming requests: every HTTP request captured on /api/v1/dlr/receive, whatever its format -->
+    <div id="tab-incoming" class="hidden">
+      <div class="toolbar">
+        <select id="incStatus" aria-label="Interpretation">
+          <option value="">All requests</option>
+          <option value="interpreted">Interpreted as DLR</option>
+          <option value="unrecognized">Unrecognized / not a DLR</option>
+          <option value="MALFORMED_JSON">Malformed JSON</option>
+          <option value="INVALID_DLR">Invalid DLR</option>
+          <option value="errors">Capture / processing errors</option>
+        </select>
+        <input type="text" id="incQ" placeholder="Capture id, message id, body text or header value…" style="min-width:300px">
+        <button class="primary" id="incSearch">Search</button>
+        <button id="incReset">Reset</button>
+        <span class="spacer"></span>
+        <span class="muted" id="incCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Received</th><th>Capture ID</th><th>Request</th><th>Content</th><th>Message ID</th>
+            <th>Source</th><th>Interpretation</th><th>DLR status</th></tr></thead>
+          <tbody id="incBody"></tbody>
+        </table>
+        <div class="empty" id="incEmpty">No requests captured yet.</div>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><button id="incMore" class="hidden">Load older</button></div>
+      <div id="incDetail"></div>
+    </div>
+
   </section>
 </main>
 
@@ -298,8 +341,9 @@
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => showTab(t.dataset.tab));
   function showTab(name) {
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-    ["feed", "lookup", "verify"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
+    ["feed", "lookup", "verify", "incoming"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
     store.set("dlr.tab", name);
+    if (name === "incoming" && typeof loadIncoming === "function") loadIncoming();
   }
 
   // ---------- health ----------
@@ -639,11 +683,166 @@
   };
   $("verifyBody").onclick = (e) => { const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id); };
 
+  // ---------- incoming requests (raw captures) ----------
+  const INC_GOOD = new Set(["INTERPRETED"]), INC_WARN = new Set(["PARTIAL", "MALFORMED_JSON", "PENDING"]),
+        INC_BAD = new Set(["INVALID_DLR", "ERROR", "TOO_LARGE"]);
+  function interpBadge(s) {
+    const cls = INC_GOOD.has(s) ? "b-good" : INC_WARN.has(s) ? "b-warn" : INC_BAD.has(s) ? "b-bad" : "b-neutral";
+    const label = { INTERPRETED: "✓ DLR", PARTIAL: "… partial DLR", INVALID_DLR: "✕ invalid DLR", NO_DLR: "no DLR inside",
+      UNRECOGNIZED: "unrecognized", MALFORMED_JSON: "… malformed JSON", NOT_JSON: "not JSON", EMPTY: "empty body",
+      TOO_LARGE: "✕ too large", ERROR: "✕ error", PENDING: "… pending" }[s] || s;
+    return `<span class="badge ${cls}" title="${esc(s)}">${esc(label)}</span>`;
+  }
+  const size = (n) => n == null ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+  let inc = { items: [], cursor: null, before: null, sel: null, detail: null, sub: "raw", busy: false };
+  function incQuery() {
+    const p = new URLSearchParams();
+    if ($("incStatus").value) p.set("status", $("incStatus").value);
+    if ($("incQ").value.trim()) p.set("q", $("incQ").value.trim());
+    return p;
+  }
+  async function loadIncoming(older) {
+    if (inc.busy) return;
+    inc.busy = true;
+    try {
+      const p = incQuery();
+      p.set("limit", "50");
+      if (older) p.set("before_id", inc.before);
+      else if (inc.cursor != null) p.set("after_id", inc.cursor);
+      const r = await api(`/api/v1/webhooks/requests?${p}`);
+      const fresh = new Set();
+      if (older) { inc.items = inc.items.concat(r.items); inc.before = r.next_before_id; }
+      else {
+        const first = inc.cursor == null;
+        if (!first) r.items.forEach(x => fresh.add(x.id));
+        inc.items = r.items.concat(inc.items);
+        if (first) inc.before = r.next_before_id;
+        inc.cursor = r.cursor;
+      }
+      if (inc.items.length > 2000) inc.items.length = 2000;
+      renderIncoming(fresh);
+    } catch (e) {
+      $("incEmpty").classList.remove("hidden");
+      $("incEmpty").innerHTML = `<span class="err">Could not load requests: ${esc(e.message)}</span>`;
+    } finally { inc.busy = false; }
+  }
+  function renderIncoming(fresh) {
+    $("incBody").innerHTML = inc.items.map(x => `<tr data-cid="${esc(x.capture_id)}" class="${fresh.has(x.id) ? "new" : ""}${inc.sel === x.capture_id ? " sel" : ""}">`
+      + `<td class="mono">${fmt(x.received_at)}</td>`
+      + `<td class="mono" title="${esc(x.capture_id)}">${esc(String(x.capture_id).slice(0, 8))}…</td>`
+      + `<td class="mono">${esc(x.method)} ${esc(x.path)}${x.query_string ? `<span class="muted">?${esc(x.query_string.length > 40 ? x.query_string.slice(0, 40) + "…" : x.query_string)}</span>` : ""}</td>`
+      + `<td><span class="mono">${esc(x.content_type || "—")}</span> <span class="muted">${size(x.body_size_bytes)}</span></td>`
+      + `<td class="mono">${x.extracted_message_id ? `<a class="msg" data-id="${esc(x.extracted_message_id)}">${esc(x.extracted_message_id)}</a>` : '<span class="muted">—</span>'}</td>`
+      + `<td>${x.detected_source && x.detected_source !== "UNKNOWN" ? catTag(x.detected_source) : '<span class="muted">—</span>'}</td>`
+      + `<td>${interpBadge(x.interpretation_status)}</td>`
+      + `<td>${x.normalized_status ? statusBadge(x.normalized_status) : x.provider_status ? `<span class="mono muted" title="provider status, not interpreted">${esc(x.provider_status)}</span>` : '<span class="muted">—</span>'}</td></tr>`).join("");
+    $("incEmpty").classList.toggle("hidden", inc.items.length > 0);
+    if (!inc.items.length) $("incEmpty").textContent = incQuery().toString() ? "No captured requests match." : "No requests captured yet.";
+    $("incCount").textContent = `${n0(inc.items.length)} shown`;
+    $("incMore").classList.toggle("hidden", !inc.before);
+  }
+  function resetIncoming() { inc.items = []; inc.cursor = null; inc.before = null; loadIncoming(); }
+  $("incSearch").onclick = resetIncoming;
+  $("incQ").onkeydown = (e) => { if (e.key === "Enter") resetIncoming(); };
+  $("incStatus").onchange = resetIncoming;
+  $("incReset").onclick = () => { $("incQ").value = ""; $("incStatus").value = ""; resetIncoming(); };
+  $("incMore").onclick = () => loadIncoming(true);
+  $("incBody").onclick = (e) => {
+    const a = e.target.closest("a.msg"); if (a) { openLookup(a.dataset.id); return; }
+    const tr = e.target.closest("tr[data-cid]"); if (tr) openCapture(tr.dataset.cid);
+  };
+  async function openCapture(id) {
+    inc.sel = id;
+    document.querySelectorAll("#incBody tr").forEach(t => t.classList.toggle("sel", t.dataset.cid === id));
+    try { inc.detail = await api(`/api/v1/webhooks/requests/${encodeURIComponent(id)}`); renderCapture(); }
+    catch (e) { $("incDetail").innerHTML = `<div class="incd err">Could not load capture: ${esc(e.message)}</div>`; }
+  }
+  function parsedJson(d) {
+    if (d.body_text == null || d.body_text.trim() === "") return undefined;
+    try { return JSON.parse(d.body_text); } catch { return undefined; }
+  }
+  function multiTable(m) {
+    const rows = Object.entries(m || {}).flatMap(([k, vs]) => (vs || []).map(v => `<tr><td class="mono">${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`));
+    return rows.length ? `<div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`
+      : `<div class="empty">None</div>`;
+  }
+  const monoOr = (v) => v == null || v === "" ? "" : `<span class="mono">${esc(v)}</span>`;
+  function renderCapture() {
+    const d = inc.detail; if (!d) return;
+    const json = parsedJson(d), isJson = json !== undefined;
+    const dlrLine = d.normalized_status ? statusBadge(d.normalized_status)
+      : d.interpretation_status === "INVALID_DLR" ? '<span class="badge b-bad">✕ rejected as DLR</span>'
+      : d.interpretation_status === "INTERPRETED" || d.interpretation_status === "PARTIAL" ? '<span class="badge b-neutral">see interpretation</span>'
+      : '<span class="badge b-neutral">not a DLR</span>';
+    let body;
+    if (inc.sub === "raw") {
+      body = d.body_truncated ? `<div class="empty">Body exceeded the size limit and was not stored.</div>`
+        : d.body_text != null ? (d.body_text === "" ? `<div class="empty">Empty body</div>` : `<pre class="body mono">${esc(d.body_text)}</pre>`)
+        : `<div class="note">Binary body (not valid ${esc(d.body_encoding || "text")}); base64:</div><pre class="body mono">${esc(d.body_base64 || "")}</pre>`;
+    } else if (inc.sub === "json") {
+      body = isJson ? `<pre class="body mono">${esc(JSON.stringify(json, null, 2))}</pre><div class="note">Formatted view. Duplicate keys, spacing and number formatting are only exact in Raw body.</div>`
+        : `<div class="note">Not valid JSON — showing the raw text.</div><pre class="body mono">${esc(d.body_text ?? d.body_base64 ?? "")}</pre>`;
+    } else if (inc.sub === "headers") body = multiTable(d.headers) + `<div class="note">Credential headers are stored masked (***).</div>`;
+    else if (inc.sub === "query") body = `<div class="note mono">${esc(d.query_string ? "?" + d.query_string : "(no query string)")}</div>` + multiTable(d.query_params);
+    else body = `<pre class="body mono">${esc(JSON.stringify(d.interpretation, null, 2) ?? "null")}</pre>`;
+    const sub = (k, l) => `<button type="button" class="subtab${inc.sub === k ? " active" : ""}" data-sub="${k}">${l}</button>`;
+    $("incDetail").innerHTML = `<div class="incd">
+      <h3>Capture <span class="mono">${esc(d.capture_id)}</span> <span class="badge b-good">✓ stored</span> ${interpBadge(d.interpretation_status)}</h3>
+      <div class="split">${kv([
+        ["received", fmt(d.received_at)], ["request", `<span class="mono">${esc(d.method)} ${esc(d.path)}</span>`],
+        ["content type", `<span class="mono">${esc(d.content_type || "—")}</span>`], ["body size", `${size(d.body_size_bytes)}${d.body_encoding ? ` · ${esc(d.body_encoding)}` : ""}`],
+        ["sender", `<span class="mono">${esc(d.remote_address)}</span>`]])}
+      ${kv([["DLR status", dlrLine], ["source", d.detected_source ? catTag(d.detected_source) : "—"],
+        ["message id", d.extracted_message_id ? `<a class="msg mono" data-id="${esc(d.extracted_message_id)}">${esc(d.extracted_message_id)}</a>` : "—"],
+        ["all message ids", d.message_ids && d.message_ids.length > 1 ? `<span class="mono">${esc(d.message_ids.join(", "))}</span>` : ""],
+        ["recipient", monoOr(d.extracted_recipient)], ["provider status", monoOr(d.provider_status)],
+        ["processing note", esc(d.interpretation_error)], ["dlr event id", esc(d.dlr_event_id)]])}</div>
+      <div class="toolbar" style="margin-top:10px">
+        <button type="button" class="copy-btn" id="incCopyRaw" ${d.body_text == null ? "disabled" : ""} title="Exact body as received">Copy original body</button>
+        <button type="button" class="copy-btn" id="incCopyJson" ${isJson ? "" : 'disabled title="Body is not valid JSON"'}>Copy as JSON</button>
+        <button type="button" class="copy-btn" id="incDownload" ${d.body_truncated ? "disabled" : ""}>Download body</button>
+      </div>
+      <div class="subtabs">${sub("raw", "Raw body")}${sub("json", "JSON")}${sub("headers", "Headers")}${sub("query", "Query")}${sub("interp", "Interpretation")}</div>
+      ${body}</div>`;
+  }
+  async function rawResponse(id) {
+    const headers = {}; const key = store.get("dlr.apiKey", ""); if (key) headers["X-API-Key"] = key;
+    const res = await fetch(`/api/v1/webhooks/requests/${encodeURIComponent(id)}/raw`, { headers });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res;
+  }
+  function flash(btn, ok, label) {
+    btn.textContent = ok ? "Copied ✓" : "Copy failed"; btn.classList.add(ok ? "ok" : "fail");
+    setTimeout(() => { btn.textContent = label; btn.classList.remove("ok", "fail"); }, 1500);
+  }
+  $("incDetail").addEventListener("click", async (e) => {
+    const d = inc.detail; if (!d) return;
+    const t = e.target.closest("button, a.msg"); if (!t) return;
+    if (t.matches("a.msg")) { openLookup(t.dataset.id); return; }
+    if (t.dataset.sub) { inc.sub = t.dataset.sub; renderCapture(); return; }
+    if (t.id === "incCopyRaw") {
+      // fetch the stored bytes again so the copy is exactly what was received
+      let text = d.body_text;
+      try { text = await (await rawResponse(d.capture_id)).text(); } catch { /* fall back to the detail text */ }
+      flash(t, text != null && await copyText(text), "Copy original body");
+    } else if (t.id === "incCopyJson") {
+      const j = parsedJson(d);
+      flash(t, j !== undefined && await copyText(JSON.stringify(j, null, 2)), "Copy as JSON");
+    } else if (t.id === "incDownload") {
+      try {
+        const blob = await (await rawResponse(d.capture_id)).blob();
+        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${d.capture_id}.body`;
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      } catch (err) { t.textContent = "Download failed"; }
+    }
+  });
+
   // ---------- loop ----------
   async function refreshAll(resetFeed) {
     if (resetFeed) { cursor = null; feed = []; seen = new Set(); }
     $("liveDot").className = paused ? "dot" : "dot live";
-    await Promise.all([loadHealth(), loadStats(), loadFeed()]);
+    await Promise.all([loadHealth(), loadStats(), loadFeed(),
+      $("tab-incoming").classList.contains("hidden") ? null : loadIncoming()]);
     if ($("lookupAuto").checked && !$("tab-lookup").classList.contains("hidden")) doLookup();
   }
   function schedule() {

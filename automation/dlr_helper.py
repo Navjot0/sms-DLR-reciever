@@ -168,7 +168,12 @@ def get_dlr_payload(message_id: str, status: str | None = None, base_url: str = 
     if response.status_code == 404:
         return None
     response.raise_for_status()
-    return response.json()
+    try:
+        return response.json()
+    except ValueError:
+        # X-DLR-Processing-Status: UNRECOGNIZED - a captured webhook that is not JSON (form, XML, text):
+        # returned as the exact text that was received
+        return response.text
 
 
 def get_all_dlr_payloads(message_id: str, base_url: str = DLR_BASE_URL) -> list[dict]:
@@ -386,3 +391,74 @@ def send_raw_dlr(body: str, source: str | None = None, base_url: str = DLR_BASE_
         headers["X-DLR-Source"] = source
     response = _session.post(f"{base_url}/api/v1/dlr/receive", data=body.encode(), headers=headers, timeout=10)
     return SimulatedDlr("", response.status_code)
+
+
+# --------------------------------------------------------------------------------------
+# Raw webhook captures (every request to /api/v1/dlr/receive, whatever its format)
+#
+# capture_id = one HTTP request received by the service (UUID, header X-Capture-Id on the ack).
+# message_id = the id found inside a payload. A capture is NOT a DLR: unrecognised payloads never
+# make get_dlr()/verify_dlrs() report received/DELIVERED.
+# --------------------------------------------------------------------------------------
+
+def list_captures(message_id: str | None = None, status: str | None = None, q: str | None = None,
+                  after_id: int | None = None, limit: int = 50, base_url: str = DLR_BASE_URL) -> dict:
+    """GET /api/v1/webhooks/requests -> {"items": [...newest first], "cursor": <id>, "next_before_id": <id|None>}.
+    status: INTERPRETED, UNRECOGNIZED, MALFORMED_JSON, NOT_JSON, EMPTY, INVALID_DLR, ... or interpreted/unrecognized/errors."""
+    params = {k: v for k, v in {"message_id": message_id, "status": status, "q": q, "after_id": after_id,
+                                "limit": limit}.items() if v is not None}
+    response = _session.get(f"{base_url}/api/v1/webhooks/requests", params=params, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_capture(capture_id: str, base_url: str = DLR_BASE_URL) -> dict | None:
+    """Full capture: method, path, query_params, headers (secrets masked), body_text / body_base64, interpretation."""
+    response = _session.get(f"{base_url}/api/v1/webhooks/requests/{capture_id}", timeout=10)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.json()
+
+
+def get_capture_raw(capture_id: str, base_url: str = DLR_BASE_URL) -> bytes | None:
+    """The request body exactly as received (same bytes)."""
+    response = _session.get(f"{base_url}/api/v1/webhooks/requests/{capture_id}/raw", timeout=10)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.content
+
+
+def get_latest_capture(message_id: str | None = None, base_url: str = DLR_BASE_URL) -> dict | None:
+    """Newest capture (optionally the newest one carrying message_id), or None."""
+    response = _session.get(f"{base_url}/api/v1/webhooks/requests/latest",
+                            params={"message_id": message_id} if message_id else None, timeout=10)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.json()
+
+
+def wait_for_capture(message_id: str, timeout: float = 120, poll_interval: float = 2,
+                     base_url: str = DLR_BASE_URL) -> dict:
+    """Polls until any request carrying message_id has been captured (known DLR or not) and returns it."""
+    deadline = time.time() + timeout
+    while True:
+        capture = get_latest_capture(message_id, base_url=base_url)
+        if capture is not None:
+            return capture
+        if time.time() >= deadline:
+            raise AssertionError(f"No webhook request captured for message_id={message_id} within {timeout}s")
+        time.sleep(poll_interval)
+
+
+def send_raw_request(body: bytes | str, content_type: str | None = "application/json", method: str = "POST",
+                     params: dict | None = None, headers: dict | None = None,
+                     base_url: str = DLR_BASE_URL) -> requests.Response:
+    """Sends any request to the receiver; the ack carries the X-Capture-Id header."""
+    h = dict(headers or {})
+    if content_type:
+        h["Content-Type"] = content_type
+    data = body.encode() if isinstance(body, str) else body
+    return _session.request(method, f"{base_url}/api/v1/dlr/receive", data=data, params=params, headers=h, timeout=10)

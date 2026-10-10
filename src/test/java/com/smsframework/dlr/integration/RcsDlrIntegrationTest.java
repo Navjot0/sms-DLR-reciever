@@ -72,7 +72,7 @@ class RcsDlrIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void unrecognisedPayloadWithRcsSourceIsRejected() {
-        assertThat(postDlr("{\"hello\":\"world\"}", Map.of("X-DLR-Source", "RCS")).statusCode()).isEqualTo(400);
+        assertThat(postDlr("{\"hello\":\"world\"}", Map.of("X-DLR-Source", "RCS")).statusCode()).isEqualTo(200);
         assertThat(jdbc.queryForObject("SELECT rejection_reason FROM dlr_events", String.class))
                 .contains("Jio, Dotgo, Vi or Airtel");
     }

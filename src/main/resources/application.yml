@@ -37,6 +37,13 @@ spring:
   mvc:
     problemdetails:
       enabled: false
+    # Webhook capture needs the exact body: no filter may parse (consume) form or multipart bodies first.
+    formcontent:
+      filter:
+        enabled: false
+  servlet:
+    multipart:
+      resolve-lazily: true
 
 management:
   endpoints:
@@ -156,7 +163,20 @@ dlr:
     # true: a status without it is stored as REJECTED. false: fall back to the wamid as message_id.
     require-message-id: ${DLR_META_REQUIRE_MESSAGE_ID:true}
 
-  # Automatic clean-up: status DLRs, message states, billing events and clicks older than `days` are deleted.
+  # Universal webhook capture: every request to /api/v1/dlr/receive (any method / content type / body) is stored
+  # in webhook_requests before it is interpreted. GET /api/v1/webhooks/requests lists them.
+  capture:
+    ack-status: ${DLR_CAPTURE_ACK_STATUS:200}     # answered once the request is committed (any interpretation)
+    # Generic extractor for payloads no DLR adapter recognises (JSON / form fields, searched breadth-first).
+    # "id" is deliberately NOT in this list: in most webhooks it is the provider's own event id.
+    message-id-fields: ${DLR_CAPTURE_MESSAGE_ID_FIELDS:message_id,messageId,msg_id,msgId,messageID,MessageId,MessageID,message-id,xJob,x-job}
+    status-fields: ${DLR_CAPTURE_STATUS_FIELDS:status,Status,message_status,delivery_status,dlr_status,deliveryStatus,eventType,event_type,event-type,state}
+    recipient-fields: ${DLR_CAPTURE_RECIPIENT_FIELDS:mobile,msisdn,recipient,recipient_id,to,toNumber,number,phone,destination,address,email}
+    extract-max-depth: 4
+    # Stored as "***" (the configured API-key header is always masked as well)
+    masked-headers: ${DLR_CAPTURE_MASKED_HEADERS:authorization,proxy-authorization,cookie,set-cookie,x-api-key,x-auth-token,x-access-token,x-hub-signature-256,x-dlr-signature}
+
+  # Automatic clean-up: webhook captures, status DLRs, message states, billing events and clicks older than `days` are deleted.
   # Runs one minute after start-up and then every `interval-ms` (1 hour), in batches of `batch-size` rows.
   retention:
     enabled: ${DLR_RETENTION_ENABLED:true}
