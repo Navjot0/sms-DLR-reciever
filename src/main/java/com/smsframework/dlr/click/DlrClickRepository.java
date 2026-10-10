@@ -25,13 +25,13 @@ public class DlrClickRepository {
             source, event_type, message_id, provider_message_id, part_number, correlation_id, contact, url_key,
             url_type, short_url, destination_url, channel, visited_count, ip_address, operating_system,
             operating_system_version, browser, browser_version, device_type, clicked_at, provider_received_at,
-            raw_payload, processing_status, processing_note, dedup_key, duplicate_of, receiver_instance""";
+            raw_payload, raw_body, processing_status, processing_note, dedup_key, duplicate_of, receiver_instance""";
 
     private static final String VALUES = """
             :source, :eventType, :messageId, :providerMessageId, :partNumber, :correlationId, :contact, :urlKey,
             :urlType, :shortUrl, :destinationUrl, :channel, :visitedCount, :ipAddress, :operatingSystem,
             :operatingSystemVersion, :browser, :browserVersion, :deviceType, :clickedAt, :providerReceivedAt,
-            CAST(:rawPayload AS jsonb), :processingStatus, :processingNote, :dedupKey, :duplicateOf, :receiverInstance""";
+            CAST(:rawPayload AS jsonb), :rawBody, :processingStatus, :processingNote, :dedupKey, :duplicateOf, :receiverInstance""";
 
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
@@ -65,6 +65,21 @@ public class DlrClickRepository {
     public List<ClickEventView> findByMessageId(String messageId, int limit) {
         return jdbc.query("SELECT * FROM dlr_click_events WHERE message_id = :m ORDER BY id LIMIT :limit",
                 new MapSqlParameterSource().addValue("m", messageId).addValue("limit", limit), (rs, n) -> view(rs));
+    }
+
+    /**
+     * Click callbacks for a message exactly as received (raw_body; the stored JSON for rows from before V13),
+     * oldest first, duplicates left out. part != null: only that recipient's ("&lt;id&gt;:&lt;part&gt;") clicks.
+     */
+    public List<String> rawTexts(String messageId, Integer part, int limit) {
+        MapSqlParameterSource p = new MapSqlParameterSource().addValue("m", messageId).addValue("limit", limit);
+        String partFilter = "";
+        if (part != null) {
+            partFilter = " AND part_number = :part";
+            p.addValue("part", part);
+        }
+        return jdbc.queryForList("SELECT coalesce(raw_body, raw_payload::text) FROM dlr_click_events WHERE message_id = :m"
+                + " AND processing_status = 'APPLIED'" + partFilter + " ORDER BY id LIMIT :limit", p, String.class);
     }
 
     /** Click summaries for the given message ids (APPLIED events only); messages without clicks are absent. */
@@ -128,6 +143,7 @@ public class DlrClickRepository {
                 .addValue("clickedAt", e.clickedAt())
                 .addValue("providerReceivedAt", e.providerReceivedAt())
                 .addValue("rawPayload", raw)
+                .addValue("rawBody", raw)                      // exactly as received
                 .addValue("processingStatus", status)
                 .addValue("processingNote", note)
                 .addValue("dedupKey", dedupKey)
@@ -155,6 +171,6 @@ public class DlrClickRepository {
                 rs.getString("operating_system_version"), rs.getString("browser"), rs.getString("browser_version"),
                 rs.getString("device_type"), rs.getObject("clicked_at", LocalDateTime.class),
                 rs.getString("processing_status"), rs.getString("processing_note"), duplicateOf, raw,
-                rs.getObject("created_at", OffsetDateTime.class));
+                rs.getObject("created_at", OffsetDateTime.class), rs.getString("raw_body"));
     }
 }

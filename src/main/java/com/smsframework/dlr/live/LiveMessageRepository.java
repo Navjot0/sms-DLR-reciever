@@ -170,7 +170,7 @@ public class LiveMessageRepository {
                     m.put("currency", rs.getString("currency"));
                 })));
         items.addAll(jdbc.query("SELECT id, created_at, part_number, contact, url_key, visited_count, device_type, browser, "
-                + "raw_payload FROM dlr_click_events WHERE message_id = :m AND processing_status = 'APPLIED'" + partFilter
+                + "raw_payload, raw_body FROM dlr_click_events WHERE message_id = :m AND processing_status = 'APPLIED'" + partFilter
                 + " ORDER BY id DESC LIMIT " + TIMELINE_LIMIT, p, (rs, n) -> item(rs, "CLICK", m -> {
                     m.put("mobile", rs.getString("contact"));
                     m.put("url_key", rs.getString("url_key"));
@@ -195,7 +195,7 @@ public class LiveMessageRepository {
         m.put("part", rs.wasNull() ? null : part);
         filler.fill(m);
         try {
-            if (kind.equals("STATUS")) {
+            if (kind.equals("STATUS") || kind.equals("CLICK")) {
                 m.put("raw_text", rs.getString("raw_body"));     // exactly as received
             }
             String raw = rs.getString("raw_payload");

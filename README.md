@@ -303,6 +303,7 @@ curl  localhost:8080/api/v1/webhooks/requests/5d3c9ab1-a6d1-4eaf-bba4-b65d61cfa1
 | `GET` | `/api/v1/dlr/{messageId}/events` | Every callback for a message, with raw payloads |
 | `GET` | `/api/v1/dlr/{messageId}/billing` | Billing summary and every billing event for a message |
 | `GET` | `/api/v1/dlr/{messageId}/clicks` | Short-link click summary and every click event for a message |
+| `GET` | `/api/v1/dlr/{messageId}/clicks/json` | Only the click callback, exactly as the platform sent it (`?all=true`: every click, oldest first) |
 | `GET` | `/api/v1/dlr/search?correlation_id=…` or `?external_message_id=…` | Lookup by secondary keys |
 | `GET` | `/api/v1/dlr/events/rejected?limit=50` | Most recent rejected callbacks |
 | `GET` | `/api/v1/dlr/events/billing/rejected?limit=50` | Most recent rejected billing events |
@@ -692,6 +693,19 @@ In that block, `clicks` counts the click callbacks received, while `visited_coun
 **Metrics.** `dlr_click_received_total`, `dlr_click_applied_total`, `dlr_click_duplicate_total` and `dlr_click_rejected_total`.
 
 ---
+
+### Click JSON exactly as received
+
+`GET /api/v1/dlr/{messageId}/clicks/json` returns the latest short-link click callback **exactly as the platform sent it**: the original text, byte for byte (same key order, spacing and escapes such as `stqa.gtls.in\/DUMMY`). The text is kept in `dlr_click_events.raw_body` (migration `V13`); clicks stored before that come back as the stored JSON.
+
+- **404** with `{"clicked": false}` while no click has arrived; header `X-Click-Count` gives the number of clicks.
+- `<id>:<n>` returns that recipient's clicks only. `?all=true` returns a JSON array of every click, oldest first (`[]` when none); exact repeats are left out.
+- `GET /api/v1/dlr/{id}/clicks` now includes `raw_text` on every click, and the live UI shows and copies click JSON as received.
+- Python: `get_click_payload(id)`, `get_click_payload_text(id)`, `get_all_click_payloads(id)`, `wait_for_click_payload(id)`.
+
+```bash
+curl http://localhost:8080/api/v1/dlr/68c3d2ef-9ced-46b8-aa1c-13be73ad9321/clicks/json
+```
 
 ## Meta WhatsApp DLRs
 

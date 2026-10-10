@@ -262,6 +262,16 @@ public class DlrQueryService {
         return clicks.summarize(List.of(messageId)).getOrDefault(messageId, ClickSummary.NOT_CLICKED);
     }
 
+    /** Click callbacks exactly as received, oldest first; "&lt;id&gt;:&lt;n&gt;" gives that recipient's clicks only. */
+    public List<String> clickTexts(String requestedId) {
+        String messageId = normalizeId(requestedId);
+        Integer part = null;
+        if (!messageId.equals(requestedId)) {
+            part = com.smsframework.dlr.util.MessageIdParts.parse(requestedId, properties.getMessageIdPartSeparator()).part();
+        }
+        return clicks.rawTexts(messageId, part, properties.getApi().getMaxEventsPageSize());
+    }
+
     public ClickDetailsResponse clickDetails(String requestedId) {
         String messageId = normalizeId(requestedId);
         return new ClickDetailsResponse(messageId, clickSummary(messageId),

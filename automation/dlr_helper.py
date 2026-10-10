@@ -136,6 +136,45 @@ def wait_for_dlrs(message_ids: Iterable[str], expected_status: str, timeout: flo
         f"billing_missing={result.get('billing_missing')}); first pending: {pending[:10]}")
 
 
+def get_click_payload(message_id: str, base_url: str = DLR_BASE_URL) -> dict | None:
+    """The latest short-link click callback exactly as the platform sent it (GET /api/v1/dlr/{id}/clicks/json),
+    or None while no click has been received. For "<id>:<n>" it is that recipient's click."""
+    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/clicks/json", timeout=10)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.json()
+
+
+def get_click_payload_text(message_id: str, base_url: str = DLR_BASE_URL) -> str | None:
+    """Same as get_click_payload(), as the original text (byte for byte, e.g. "\\/" escapes kept)."""
+    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/clicks/json", timeout=10)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.text
+
+
+def get_all_click_payloads(message_id: str, base_url: str = DLR_BASE_URL) -> list[dict]:
+    """Every click callback received for the id, oldest first (GET /api/v1/dlr/{id}/clicks/json?all=true)."""
+    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/clicks/json", params={"all": "true"}, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def wait_for_click_payload(message_id: str, timeout: float = 120, poll_interval: float = 2,
+                           base_url: str = DLR_BASE_URL) -> dict:
+    """Polls until a click callback for the id arrives and returns it as sent; AssertionError on timeout."""
+    deadline = time.time() + timeout
+    while True:
+        payload = get_click_payload(message_id, base_url=base_url)
+        if payload is not None:
+            return payload
+        if time.time() >= deadline:
+            raise AssertionError(f"No short-link click received for message_id={message_id} within {timeout}s")
+        time.sleep(poll_interval)
+
+
 def get_clicks(message_id: str, base_url: str = DLR_BASE_URL) -> dict:
     """Short-link click summary + click events for a message (GET /api/v1/dlr/{id}/clicks)."""
     response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/clicks", timeout=10)

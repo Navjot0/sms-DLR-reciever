@@ -130,4 +130,33 @@ class DlrClickIntegrationTest extends AbstractIntegrationTest {
             assertThat(get("/actuator/metrics/" + m).statusCode()).as(m).isEqualTo(200);
         }
     }
+
+    @Test
+    void clickJsonIsReturnedExactlyAsTheplatformSentIt() {
+        assertThat(get("/api/v1/dlr/" + MSG + "/clicks/json").statusCode()).isEqualTo(404);
+        assertThat(get("/api/v1/dlr/" + MSG + "/clicks/json?all=true").body()).isEqualTo("[]");
+
+        postDlr(TestPayloads.CLICK_EXAMPLE, Map.of());
+        postDlr(TestPayloads.CLICK_EXAMPLE_2, Map.of());      // "\/" escapes, no spaces
+        postDlr(TestPayloads.CLICK_EXAMPLE_2, Map.of());      // exact repeat: left out
+
+        HttpResponse<String> latest = get("/api/v1/dlr/" + MSG + "/clicks/json");
+        assertThat(latest.statusCode()).isEqualTo(200);
+        assertThat(latest.body()).isEqualTo(TestPayloads.CLICK_EXAMPLE_2);
+        assertThat(latest.headers().firstValue("X-Click-Count")).contains("2");
+        // the recipient id works too
+        assertThat(get("/api/v1/dlr/" + MSG + ":1/clicks/json").body()).isEqualTo(TestPayloads.CLICK_EXAMPLE_2);
+        assertThat(get("/api/v1/dlr/" + MSG + ":2/clicks/json").statusCode()).isEqualTo(404);
+
+        assertThat(get("/api/v1/dlr/" + MSG + "/clicks/json?all=true").body())
+                .isEqualTo("[" + TestPayloads.CLICK_EXAMPLE + "," + TestPayloads.CLICK_EXAMPLE_2 + "]");
+
+        // the click list, live feed and lookup carry the same original text
+        assertThat(getJson("/api/v1/dlr/" + MSG + "/clicks").at("/events/1/raw_text").asText())
+                .isEqualTo(TestPayloads.CLICK_EXAMPLE_2);
+        assertThat(getJson("/api/v1/dlr/live/feed").at("/items/0/raw_text").asText())
+                .isEqualTo(TestPayloads.CLICK_EXAMPLE_2);
+        JsonNode tl = getJson("/api/v1/dlr/live/message?id=" + MSG).get("timeline");
+        assertThat(tl.get(tl.size() - 1).get("raw_text").asText()).isEqualTo(TestPayloads.CLICK_EXAMPLE_2);
+    }
 }

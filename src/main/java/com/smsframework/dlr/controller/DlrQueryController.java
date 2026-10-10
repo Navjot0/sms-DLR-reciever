@@ -135,6 +135,31 @@ public class DlrQueryController {
         return queryService.billingDetails(messageId);
     }
 
+    /**
+     * Only the short-link click callback, exactly as the platform sent it (byte for byte): the latest click,
+     * or with all=true a JSON array of every click, oldest first ([] when none). 404 while no click arrived.
+     * "&lt;id&gt;:&lt;n&gt;" returns that recipient's clicks only.
+     */
+    @GetMapping(value = "/{messageId}/clicks/json", produces = MediaType.APPLICATION_JSON_VALUE)
+    public org.springframework.http.ResponseEntity<?> clickJson(@PathVariable String messageId,
+                                                                @RequestParam(defaultValue = "false") boolean all) {
+        List<String> texts = queryService.clickTexts(messageId);
+        if (all) {
+            return org.springframework.http.ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
+                    .body("[" + String.join(",", texts) + "]");
+        }
+        if (texts.isEmpty()) {
+            java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("message_id", messageId);
+            body.put("clicked", false);
+            body.put("message", "no short-link click received yet for this message_id");
+            return org.springframework.http.ResponseEntity.status(404).body(body);
+        }
+        return org.springframework.http.ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
+                .header("X-Click-Count", String.valueOf(texts.size()))
+                .body(texts.get(texts.size() - 1));
+    }
+
     /** Short-link clicks recorded for a message, with the click summary. */
     @GetMapping("/{messageId}/clicks")
     public ClickDetailsResponse clicks(@PathVariable String messageId) {

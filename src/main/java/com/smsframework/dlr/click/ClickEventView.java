@@ -32,5 +32,7 @@ public record ClickEventView(
         String processingNote,
         Long duplicateOf,
         JsonNode rawPayload,
-        OffsetDateTime createdAt) {
+        OffsetDateTime createdAt,
+        /* The click callback exactly as the platform sent it (null for clicks stored before V13). */
+        String rawText) {
 }

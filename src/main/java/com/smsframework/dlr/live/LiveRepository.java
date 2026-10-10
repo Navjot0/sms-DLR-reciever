@@ -54,13 +54,13 @@ public class LiveRepository {
                 rs.getString("currency"), null, null, null, null, rs.getString("raw"), null)));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, contact, processing_status,
-                       processing_note, url_key, visited_count, device_type, raw_payload::text AS raw
+                       processing_note, url_key, visited_count, device_type, raw_payload::text AS raw, raw_body
                 FROM dlr_click_events WHERE id > :ac AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "CLICK", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("contact"), null, null, rs.getString("processing_status"), rs.getString("processing_note"),
                 null, null, null, null, rs.getString("url_key"), integer(rs, "visited_count"),
-                rs.getString("device_type"), null, rs.getString("raw"), null)));
+                rs.getString("device_type"), null, rs.getString("raw"), rs.getString("raw_body"))));
         items.sort(Comparator.comparing(LiveFeedItem::createdAt).thenComparing(LiveFeedItem::id).reversed());
         return items.size() > limit ? items.subList(0, limit) : items;
     }
