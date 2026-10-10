@@ -46,7 +46,7 @@ public class RcsDlrAdapter implements DlrProviderAdapter {
     public static final String SOURCE = "RCS";
 
     /** Operator wire format of a payload. */
-    public enum Operator { JIO, DOTGO, VI, AIRTEL }
+    public enum Operator { PLATFORM, JIO, DOTGO, VI, AIRTEL }
 
     /** The fields every operator format boils down to. */
     private record Fields(Operator operator, String messageId, String status, String mobile, String time,
@@ -81,6 +81,9 @@ public class RcsDlrAdapter implements DlrProviderAdapter {
         if (p == null || !p.isObject()) {
             return null;
         }
+        if (isPlatformEvent(p)) {
+            return Operator.PLATFORM;
+        }
         if (p.path("entity").isObject() && (p.has("entityType") || p.path("entity").has("eventType"))) {
             return Operator.JIO;
         }
@@ -107,12 +110,28 @@ public class RcsDlrAdapter implements DlrProviderAdapter {
         }
     }
 
+    /**
+     * The CPaaS platform's own RCS webhook (what customers receive):
+     * {"event_type":"message_dispatch|message_delivery|...","message_id":"&lt;platform id&gt;",
+     *  "external_message_id":"&lt;operator id&gt;","corelation_id":"..","status":"Submitted|sent|delivered|read|failed",
+     *  "timestamp":"..","message":{"number":"91..","direction":"outbound","campaign_id":..},
+     *  "agent":{"name":"..","provider":"..","provider_type":".."},"delivery_info":{..},"additional_data":{"provider":"vi-rcs"}}
+     */
+    public static boolean isPlatformEvent(JsonNode p) {
+        String type = p.path("event_type").asText("");
+        return type.startsWith("message_") && p.has("message_id")
+                && (p.path("message").isObject() || p.path("agent").isObject());
+    }
+
     @Override
     public NormalizedDlr normalize(JsonNode payload) {
         Operator op = detect(payload);
         if (op == null) {
             throw new DlrValidationException(SOURCE,
-                    "payload is not a Jio, Dotgo, Vi or Airtel RCS delivery report");
+                    "payload is not a platform, Jio, Dotgo, Vi or Airtel RCS delivery report");
+        }
+        if (op == Operator.PLATFORM) {
+            return normalizePlatform(payload);
         }
         Fields f = extract(op, payload);
         List<String> missing = new ArrayList<>();
@@ -139,8 +158,89 @@ public class RcsDlrAdapter implements DlrProviderAdapter {
                 .service(op.name());
     }
 
+    private NormalizedDlr normalizePlatform(JsonNode p) {
+        JsonNode msg = p.path("message");
+        if ("inbound".equalsIgnoreCase(text(msg, "direction"))) {
+            throw new DlrValidationException(SOURCE, "platform: inbound message, not a delivery report");
+        }
+        String messageId = text(p, "message_id");
+        String status = text(p, "status");
+        JsonNode delivery = p.path("delivery_info");
+        if (status == null) {
+            status = text(delivery.path("delivery_status"), "status");
+        }
+        List<String> missing = new ArrayList<>();
+        if (messageId == null) {
+            missing.add("message_id is missing");
+        }
+        if (status == null) {
+            missing.add("status is missing");
+        }
+        if (!missing.isEmpty()) {
+            throw new DlrValidationException(SOURCE, "platform: " + String.join("; ", missing));
+        }
+        String failure = text(delivery, "failure_reason");
+        String errorMessage = text(delivery, "error_message");
+        // operator error code: additional_data.err_code / provider_code (e.g. "5" / "not_found"), else the
+        // error inside the forwarded operator webhook
+        JsonNode extra = p.path("additional_data");
+        JsonNode opError = delivery.path("delivery_status").path("webhook_data").path("entity").path("error");
+        String errCode = firstNonNull(text(extra, "err_code"), text(opError, "errCode"));
+        String providerCode = firstNonNull(text(extra, "provider_code"), text(opError, "code"));
+        JsonNode agent = p.path("agent");
+        return NormalizedDlr.of(SOURCE)
+                .messageId(messageId)
+                .externalMessageId(text(p, "external_message_id"))
+                .correlationId(firstNonNull(text(p, "corelation_id"), text(p, "correlation_id")))
+                .campaignId(text(msg, "campaign_id"))
+                .mobile(phone(text(msg, "number")))
+                .providerStatus(status)
+                .normalizedStatus(statusNormalizer.normalize(SOURCE, status))
+                .statusCode(firstNonNull(errCode, firstNonNull(providerCode, failure)))
+                .errorCode(firstNonNull(providerCode, errCode))
+                .errorReason(errorMessage != null ? errorMessage : failure)
+                .dlrReceivedAt(parseTimestamp(text(p, "timestamp"), zone).orElse(null))
+                .sender(text(agent, "name"))
+                .service(operatorOf(p));
+    }
+
+    /** JIO / DOTGO / VI / AIRTEL from the platform event's provider fields, else the provider name as sent. */
+    private static String operatorOf(JsonNode p) {
+        JsonNode extra = p.path("additional_data");
+        JsonNode agent = p.path("agent");
+        for (String v : new String[]{text(extra, "provider_type"), text(agent, "provider_type"), text(extra, "provider"),
+                text(p.path("delivery_info").path("delivery_status"), "provider"), text(agent, "provider")}) {
+            if (v == null) {
+                continue;
+            }
+            String l = v.toLowerCase(java.util.Locale.ROOT);
+            if (l.contains("jio")) {
+                return "JIO";
+            }
+            if (l.contains("dotgo")) {
+                return "DOTGO";
+            }
+            if (l.contains("airtel")) {
+                return "AIRTEL";
+            }
+            if (l.equals("vi") || l.startsWith("vi-") || l.startsWith("vi ") || l.contains("vodafone")) {
+                return "VI";
+            }
+        }
+        String any = text(extra, "provider") != null ? text(extra, "provider") : text(agent, "provider");
+        return any == null ? "PLATFORM" : any.toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private static String firstNonNull(String a, String b) {
+        return a != null ? a : b;
+    }
+
     private Fields extract(Operator op, JsonNode p) {
         switch (op) {
+            case PLATFORM: {
+                return new Fields(op, text(p, "message_id"), text(p, "status"), phone(text(p.path("message"), "number")),
+                        text(p, "timestamp"), null, null, null);
+            }
             case JIO: {
                 JsonNode e = p.path("entity");
                 // an entityType other than STATUS_EVENT (e.g. a user reply) has no eventType -> rejected as "status missing"

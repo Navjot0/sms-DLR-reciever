@@ -50,7 +50,9 @@ public class DefaultSmsDlrAdapter extends AbstractJsonDlrAdapter {
      */
     static boolean isFlat(JsonNode payload) {
         return payload != null && payload.isObject() && !payload.has("payload") && payload.has("message_id")
-                && (payload.has("status") || payload.has("mobile"));
+                && (payload.has("status") || payload.has("mobile"))
+                // the platform's RCS webhook also has message_id + status, but is an event with a message object
+                && !com.smsframework.dlr.rcs.RcsDlrAdapter.isPlatformEvent(payload);
     }
 
     @Override

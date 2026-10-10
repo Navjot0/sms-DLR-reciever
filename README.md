@@ -625,10 +625,11 @@ Meta (WhatsApp Cloud API) status webhooks are posted to the same `POST /api/v1/d
 
 ## RCS DLRs
 
-RCS delivery reports are posted to the same `POST /api/v1/dlr/receive`, in the operator's own wire format. Four formats are supported: the same ones the RCS Simulator sends. The operator is detected from the payload, so no header is needed. You can also send `?source=RCS` (aliases `JIO`, `DOTGO`, `VI`, `AIRTEL`). All of them are stored with source `RCS`, and the operator goes in the `service` column. Samples: `samples/rcs-jio.json`, `rcs-dotgo.json`, `rcs-vi.json`, `rcs-airtel.json`.
+RCS delivery reports are posted to the same `POST /api/v1/dlr/receive`, in the operator's own wire format. Four formats are supported: the same ones the RCS Simulator sends. The operator is detected from the payload, so no header is needed. You can also send `?source=RCS` (aliases `JIO`, `DOTGO`, `VI`, `AIRTEL`). All of them are stored with source `RCS`, and the operator goes in the `service` column. Samples: `samples/rcs-platform-dispatch.json`, `rcs-platform-delivery.json`, `rcs-platform-jio-sent.json` (the platform's own webhook), and the operator formats `rcs-jio.json`, `rcs-dotgo.json`, `rcs-vi.json`, `rcs-airtel.json`. For the platform webhook the operator (JIO / DOTGO / VI / AIRTEL) is worked out from `additional_data.provider_type`, `agent.provider_type` or `additional_data.provider`; the agent name is stored as `sender`; inbound messages (`message.direction` = `inbound`) are rejected.
 
 | Operator | Detected by | Message id | Status | Phone | Time | Error |
 |---|---|---|---|---|---|---|
+| **CPaaS platform webhook** | `event_type` = `message_*` + `message` / `agent` object | `message_id` (the platform id the send API returns); `external_message_id` and `corelation_id` are kept | `status` (`Submitted`, `sent`, `delivered`, `read`, `failed`) | `message.number` | `timestamp` | `delivery_info.failure_reason` / `error_message` |
 | Jio | `entityType` + `entity` | `entity.messageId` | `entity.eventType` (`MESSAGE_SENT`, `MESSAGE_DELIVERED`, `MESSAGE_READ`, `MESSAGE_FAILED`) | `userPhoneNumber` | `entity.sendTime` | `entity.error.code` / `message` |
 | Dotgo | `message.data` (base64 JSON) | `messageId` | `eventType` (`SENT`, `DELIVERED`, `READ`, `FAILED`) | `senderPhoneNumber` | `sendTime` | `code` / `reason` |
 | Vi | `RCSMessage` | `RCSMessage.msgId` | `RCSMessage.status` (`sent`, `delivered`, `read`, `failed`) | `messageContact.userContact` | `RCSMessage.timestamp` | – |
