@@ -112,7 +112,16 @@
   .copy-btn.ok { color: var(--good-ink); border-color: var(--good); }
   button[disabled] { opacity: .45; cursor: not-allowed; }
   .copy-btn.fail { color: var(--critical-ink); border-color: var(--critical); }
-  details.raw pre { max-width: 520px; white-space: pre-wrap; word-break: break-all; }
+  details.raw pre { min-width: 460px; max-width: 680px; max-height: 420px; white-space: pre; overflow: auto; }
+  @media (max-width: 640px) { details.raw pre { min-width: 0; max-width: 80vw; } }
+  /* beautified JSON */
+  pre.json { line-height: 1.5; tab-size: 2; }
+  .jk { color: var(--accent); }
+  .js { color: var(--good-ink); }
+  .jnum { color: var(--warning-ink); }
+  .jb { color: var(--critical-ink); }
+  .jn { color: var(--text-3); font-style: italic; }
+  .jp { color: var(--text-3); }
   .tiles .tile .value.good { color: var(--good-ink); } .tiles .tile .value.bad { color: var(--critical-ink); }
   .tiles .tile .value.warn { color: var(--warning-ink); }
   .cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 14px; }
@@ -538,7 +547,7 @@
     if (it.raw == null) return "";
     const open = openRaw.has(key);
     return `<span class="rawc"><details class="raw" data-key="${esc(key)}"${open ? " open" : ""}><summary>JSON</summary>`
-      + `<pre>${open ? esc(rawShown(it.raw_text, it.raw)) : ""}</pre></details>`
+      + `<pre class="json mono">${open ? jsonView(it.raw_text, it.raw) : ""}</pre></details>`
       + `<button type="button" class="copy-btn" data-copy-key="${esc(key)}" title="Copy the DLR JSON">Copy</button></span>`;
   }
 
@@ -558,6 +567,47 @@
   }
   // the DLR exactly as received when we have its text, otherwise the stored JSON
   function rawShown(text, raw) { return text != null ? text : JSON.stringify(raw, null, 2); }
+  // Beautified view of the JSON text exactly as received: only whitespace is changed, so key order,
+  // duplicate keys, escapes and number formatting stay as sent. Not-JSON text is shown as it is.
+  function prettyJsonHtml(text) {
+    let out = "", ind = 0, i = 0;
+    const n = text.length, ws = /\s/, nl = () => "\n" + "  ".repeat(Math.max(ind, 0));
+    while (i < n) {
+      const c = text[i];
+      if (c === '"') {
+        let j = i + 1;
+        while (j < n && text[j] !== '"') { if (text[j] === "\\") j++; j++; }
+        const str = text.slice(i, j + 1); i = j + 1;
+        let k = i; while (k < n && ws.test(text[k])) k++;
+        out += `<span class="${text[k] === ":" ? "jk" : "js"}">${esc(str)}</span>`;
+      } else if (ws.test(c)) { i++; }
+      else if (c === "{" || c === "[") {
+        const close = c === "{" ? "}" : "]";
+        let k = i + 1; while (k < n && ws.test(text[k])) k++;
+        if (text[k] === close) { out += `<span class="jp">${c}${close}</span>`; i = k + 1; }
+        else { ind++; out += `<span class="jp">${c}</span>` + nl(); i++; }
+      } else if (c === "}" || c === "]") { ind--; out += nl() + `<span class="jp">${c}</span>`; i++; }
+      else if (c === ",") { out += `<span class="jp">,</span>` + nl(); i++; }
+      else if (c === ":") { out += `<span class="jp">:</span> `; i++; }
+      else {
+        let j = i; while (j < n && !/[\s,:\[\]{}"]/.test(text[j])) j++;
+        if (j === i) j = i + 1;
+        const lit = text.slice(i, j); i = j;
+        const cls = lit === "null" ? "jn" : (lit === "true" || lit === "false") ? "jb" : "jnum";
+        out += `<span class="${cls}">${esc(lit)}</span>`;
+      }
+    }
+    return out;
+  }
+  function isJsonText(t) {
+    if (t == null || !/^\s*[\[{]/.test(t)) return false;
+    try { JSON.parse(t); return true; } catch { return false; }
+  }
+  // HTML for a <pre class="json">: beautified when it is JSON, escaped original text otherwise
+  function jsonView(text, raw) {
+    const t = text != null ? text : (raw == null ? "" : JSON.stringify(raw));
+    return isJsonText(t) ? prettyJsonHtml(t) : esc(t);
+  }
   async function copyJson(btn, raw, text) {
     const ok = (text != null || raw != null) && await copyText(rawShown(text, raw));
     btn.textContent = ok ? "Copied ✓" : "Copy failed";
@@ -570,7 +620,7 @@
     if (d.open) {
       openRaw.add(key);
       const it = feed.find(f => f.kind + ":" + f.id === key);
-      d.querySelector("pre").textContent = it ? rawShown(it.raw_text, it.raw) : "";
+      d.querySelector("pre").innerHTML = it ? jsonView(it.raw_text, it.raw) : "";
     } else openRaw.delete(key);
   }, true);
   function renderFeed(newKeys) {
@@ -650,7 +700,7 @@
         : x.kind === "BILLING" ? `${esc(x.transaction_type || "")} · ${esc(x.units ?? "")} unit(s) · ${esc(x.amount ?? "")} ${esc(x.currency || "")}`
         : `link ${esc(x.url_key || "")} · visit #${esc(x.visited_count ?? "")} · ${esc(x.device_type || "")} ${esc(x.browser || "")}`;
       return `<tr><td class="mono">${fmt(x.created_at)}</td><td>${kindTag(x.kind)}</td><td class="mono">${esc(r.message_id + (x.part != null ? ":" + x.part : ""))}</td><td>${what}</td>`
-        + `<td><span class="rawc"><details class="raw"><summary>JSON</summary><pre>${esc(rawShown(x.raw_text, x.raw))}</pre></details>`
+        + `<td><span class="rawc"><details class="raw"><summary>JSON</summary><pre class="json mono">${jsonView(x.raw_text, x.raw)}</pre></details>`
         + `<button type="button" class="copy-btn" data-copy-idx="${lookupRaws.push(x) - 1}" title="Copy the DLR JSON">Copy</button></span></td></tr>`;
     }).join("");
     const tlHtml = tl ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Message ID</th><th>Event</th><th>Raw</th></tr></thead><tbody>${tl}</tbody></table></div>`
@@ -694,7 +744,7 @@
     return `<span class="badge ${cls}" title="${esc(s)}">${esc(label)}</span>`;
   }
   const size = (n) => n == null ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
-  let inc = { items: [], cursor: null, before: null, sel: null, detail: null, sub: "raw", busy: false };
+  let inc = { items: [], cursor: null, before: null, sel: null, detail: null, sub: "json", busy: false };
   function incQuery() {
     const p = new URLSearchParams();
     if ($("incStatus").value) p.set("status", $("incStatus").value);
@@ -780,11 +830,11 @@
         : d.body_text != null ? (d.body_text === "" ? `<div class="empty">Empty body</div>` : `<pre class="body mono">${esc(d.body_text)}</pre>`)
         : `<div class="note">Binary body (not valid ${esc(d.body_encoding || "text")}); base64:</div><pre class="body mono">${esc(d.body_base64 || "")}</pre>`;
     } else if (inc.sub === "json") {
-      body = isJson ? `<pre class="body mono">${esc(JSON.stringify(json, null, 2))}</pre><div class="note">Formatted view. Duplicate keys, spacing and number formatting are only exact in Raw body.</div>`
+      body = isJson ? `<pre class="body json mono">${prettyJsonHtml(d.body_text)}</pre><div class="note">Formatted view (only spacing changed). Raw body and Copy original body give the exact text.</div>`
         : `<div class="note">Not valid JSON — showing the raw text.</div><pre class="body mono">${esc(d.body_text ?? d.body_base64 ?? "")}</pre>`;
     } else if (inc.sub === "headers") body = multiTable(d.headers) + `<div class="note">Credential headers are stored masked (***).</div>`;
     else if (inc.sub === "query") body = `<div class="note mono">${esc(d.query_string ? "?" + d.query_string : "(no query string)")}</div>` + multiTable(d.query_params);
-    else body = `<pre class="body mono">${esc(JSON.stringify(d.interpretation, null, 2) ?? "null")}</pre>`;
+    else body = `<pre class="body json mono">${jsonView(null, d.interpretation)}</pre>`;
     const sub = (k, l) => `<button type="button" class="subtab${inc.sub === k ? " active" : ""}" data-sub="${k}">${l}</button>`;
     $("incDetail").innerHTML = `<div class="incd">
       <h3>Capture <span class="mono">${esc(d.capture_id)}</span> <span class="badge b-good">✓ stored</span> ${interpBadge(d.interpretation_status)}</h3>
@@ -802,7 +852,7 @@
         <button type="button" class="copy-btn" id="incCopyJson" ${isJson ? "" : 'disabled title="Body is not valid JSON"'}>Copy as JSON</button>
         <button type="button" class="copy-btn" id="incDownload" ${d.body_truncated ? "disabled" : ""}>Download body</button>
       </div>
-      <div class="subtabs">${sub("raw", "Raw body")}${sub("json", "JSON")}${sub("headers", "Headers")}${sub("query", "Query")}${sub("interp", "Interpretation")}</div>
+      <div class="subtabs">${sub("json", "JSON")}${sub("raw", "Raw body")}${sub("headers", "Headers")}${sub("query", "Query")}${sub("interp", "Interpretation")}</div>
       ${body}</div>`;
   }
   async function rawResponse(id) {
@@ -826,8 +876,10 @@
       try { text = await (await rawResponse(d.capture_id)).text(); } catch { /* fall back to the detail text */ }
       flash(t, text != null && await copyText(text), "Copy original body");
     } else if (t.id === "incCopyJson") {
-      const j = parsedJson(d);
-      flash(t, j !== undefined && await copyText(JSON.stringify(j, null, 2)), "Copy as JSON");
+      // the same beautified text as shown (key order and duplicate keys kept)
+      const box = document.createElement("div");
+      box.innerHTML = parsedJson(d) !== undefined ? prettyJsonHtml(d.body_text) : "";
+      flash(t, box.textContent !== "" && await copyText(box.textContent), "Copy as JSON");
     } else if (t.id === "incDownload") {
       try {
         const blob = await (await rawResponse(d.capture_id)).blob();
