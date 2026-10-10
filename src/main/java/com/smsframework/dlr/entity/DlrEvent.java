@@ -37,6 +37,8 @@ public class DlrEvent {
     private Integer units;
     /** Raw JSON text, stored as JSONB. Always present. */
     private String rawPayload;
+    /** The callback body exactly as received; null for rows stored before V11. */
+    private String rawBody;
     private ProcessingStatus processingStatus;
     private String processingNote;
     private String rejectionReason;
@@ -92,6 +94,8 @@ public class DlrEvent {
     public void setTemplateId(String templateId) { this.templateId = templateId; }
     public Integer getUnits() { return units; }
     public void setUnits(Integer units) { this.units = units; }
+    public String getRawBody() { return rawBody; }
+    public void setRawBody(String rawBody) { this.rawBody = rawBody; }
     public String getRawPayload() { return rawPayload; }
     public void setRawPayload(String rawPayload) { this.rawPayload = rawPayload; }
     public ProcessingStatus getProcessingStatus() { return processingStatus; }

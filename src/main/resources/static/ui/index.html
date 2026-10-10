@@ -494,7 +494,7 @@
     if (it.raw == null) return "";
     const open = openRaw.has(key);
     return `<span class="rawc"><details class="raw" data-key="${esc(key)}"${open ? " open" : ""}><summary>JSON</summary>`
-      + `<pre>${open ? esc(JSON.stringify(it.raw, null, 2)) : ""}</pre></details>`
+      + `<pre>${open ? esc(rawShown(it.raw_text, it.raw)) : ""}</pre></details>`
       + `<button type="button" class="copy-btn" data-copy-key="${esc(key)}" title="Copy the DLR JSON">Copy</button></span>`;
   }
 
@@ -512,8 +512,10 @@
     ta.remove();
     return ok;
   }
-  async function copyJson(btn, raw) {
-    const ok = raw != null && await copyText(JSON.stringify(raw, null, 2));
+  // the DLR exactly as received when we have its text, otherwise the stored JSON
+  function rawShown(text, raw) { return text != null ? text : JSON.stringify(raw, null, 2); }
+  async function copyJson(btn, raw, text) {
+    const ok = (text != null || raw != null) && await copyText(rawShown(text, raw));
     btn.textContent = ok ? "Copied ✓" : "Copy failed";
     btn.classList.add(ok ? "ok" : "fail");
     setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("ok", "fail"); }, 1500);
@@ -524,7 +526,7 @@
     if (d.open) {
       openRaw.add(key);
       const it = feed.find(f => f.kind + ":" + f.id === key);
-      d.querySelector("pre").textContent = it ? JSON.stringify(it.raw, null, 2) : "";
+      d.querySelector("pre").textContent = it ? rawShown(it.raw_text, it.raw) : "";
     } else openRaw.delete(key);
   }, true);
   function renderFeed(newKeys) {
@@ -554,7 +556,7 @@
   $("clearFeed").onclick = () => { feed = []; renderFeed(new Set()); };
   $("feedBody").onclick = (e) => {
     const c = e.target.closest("button[data-copy-key]");
-    if (c) { const it = feed.find(f => f.kind + ":" + f.id === c.dataset.copyKey); copyJson(c, it && it.raw); return; }
+    if (c) { const it = feed.find(f => f.kind + ":" + f.id === c.dataset.copyKey); copyJson(c, it && it.raw, it && it.raw_text); return; }
     const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id);
   };
 
@@ -565,7 +567,7 @@
   let lookupRaws = [];
   $("lookupOut").addEventListener("click", (e) => {
     const c = e.target.closest("button[data-copy-idx]");
-    if (c) copyJson(c, lookupRaws[+c.dataset.copyIdx]);
+    if (c) { const x = lookupRaws[+c.dataset.copyIdx]; copyJson(c, x && x.raw, x && x.raw_text); }
   });
   async function doLookup() {
     const id = $("lookupId").value.trim();
@@ -604,8 +606,8 @@
         : x.kind === "BILLING" ? `${esc(x.transaction_type || "")} · ${esc(x.units ?? "")} unit(s) · ${esc(x.amount ?? "")} ${esc(x.currency || "")}`
         : `link ${esc(x.url_key || "")} · visit #${esc(x.visited_count ?? "")} · ${esc(x.device_type || "")} ${esc(x.browser || "")}`;
       return `<tr><td class="mono">${fmt(x.created_at)}</td><td>${kindTag(x.kind)}</td><td class="mono">${esc(r.message_id + (x.part != null ? ":" + x.part : ""))}</td><td>${what}</td>`
-        + `<td><span class="rawc"><details class="raw"><summary>JSON</summary><pre>${esc(JSON.stringify(x.raw, null, 2))}</pre></details>`
-        + `<button type="button" class="copy-btn" data-copy-idx="${lookupRaws.push(x.raw) - 1}" title="Copy the DLR JSON">Copy</button></span></td></tr>`;
+        + `<td><span class="rawc"><details class="raw"><summary>JSON</summary><pre>${esc(rawShown(x.raw_text, x.raw))}</pre></details>`
+        + `<button type="button" class="copy-btn" data-copy-idx="${lookupRaws.push(x) - 1}" title="Copy the DLR JSON">Copy</button></span></td></tr>`;
     }).join("");
     const tlHtml = tl ? `<div class="table-wrap"><table><thead><tr><th>Received</th><th>Type</th><th>Message ID</th><th>Event</th><th>Raw</th></tr></thead><tbody>${tl}</tbody></table></div>`
       : `<div class="empty">No callbacks stored for this ${r.part != null ? "recipient" : "message"} yet.</div>`;

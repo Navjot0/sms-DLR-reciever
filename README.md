@@ -311,7 +311,7 @@ If callbacks for that `message_id` arrived but were **rejected**, the response a
 
 ### `GET /api/v1/dlr/{messageId}/json` – DLR JSON only
 
-Returns **only** the DLR, exactly as CPaaS (or the provider) sent it, with nothing added:
+Returns **only** the DLR, exactly as CPaaS (or the provider) sent it: the original text byte for byte, with the same key order, spacing and escaping (for example `https:\/\/…` stays escaped). Nothing is added. The text is kept in `dlr_events.raw_body` (migration `V11`); DLRs stored before that come back as the stored JSON, with the same values but keys in PostgreSQL's order. The live UI's JSON view and Copy button also show and copy the original text.
 
 ```bash
 curl http://localhost:8080/api/v1/dlr/1522ff82-2818-4670-b24e-306f0cf9266b/json
@@ -327,8 +327,11 @@ curl http://localhost:8080/api/v1/dlr/1522ff82-2818-4670-b24e-306f0cf9266b/json
 ```
 
 - **404** with `{"message_id": …, "received": false}` while no DLR has arrived, so automation can poll it.
+- A DLR that arrived but could not be processed (stored as `REJECTED`, e.g. a format the receiver did not recognise yet) is still returned exactly as sent, with the header `X-DLR-Processing-Status: REJECTED` and the reason in `X-DLR-Rejection-Reason`. Accepted DLRs carry `X-DLR-Processing-Status: ACCEPTED`.
 - `<id>:<n>` returns that recipient's own DLR.
 - When several DLRs exist for one id, it returns the one that decided the status. Add **`?all=true`** to get a JSON array of every DLR received for the id, oldest first (`[]` when none).
+- **`?status=<status>`** returns the DLR the platform sent for one particular status, for example `?status=submitted`, `sent`, `delivered`, `read`, `failed` or `rejected`. It matches the provider's own value (`Submitted`, `DELIVRD`, `sms_failed`, …) or the normalized one (`SENT`, `DELIVERED`, `READ`, `FAILED`, `REJECTED`), case-insensitively; `submit` also matches `Submitted`. It answers 404 while no DLR with that status has arrived.
+- `?all=true` includes every DLR received for the id, including ones that could not be processed; only exact repeats are left out.
 - **`POST /api/v1/dlr/json`** with `{"message_ids": ["id1", "id2:3", …]}` returns a JSON array of DLRs in the same order, with `null` for an id that has no DLR yet.
 
 Python: `get_dlr_payload(id)`, `wait_for_dlr_payload(id)`, `get_all_dlr_payloads(id)` and `get_dlr_payloads([ids])` in `automation/dlr_helper.py`.

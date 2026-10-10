@@ -68,8 +68,8 @@ public class DlrReprocessService {
     }
 
     private ReprocessResponse.Item doReprocess(DlrEvent original, String sourceOverride) {
-        String raw = original.getRawPayload();
-        if (!isReprocessable(raw)) {
+        String raw = original.getRawBody() != null ? original.getRawBody() : original.getRawPayload();
+        if (!isReprocessable(original.getRawPayload())) {
             events.updateNote(original.getId(), "reprocess skipped: raw payload not reprocessable");
             return new ReprocessResponse.Item(original.getId(), null, original.getMessageId(), "SKIPPED", null,
                     "raw payload was not valid JSON (or was too large/empty) when received; nothing to reprocess");

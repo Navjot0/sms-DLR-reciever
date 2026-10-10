@@ -35,33 +35,62 @@ public class DlrQueryController {
     }
 
     /**
-     * Only the DLR JSON, exactly as CPaaS / the provider sent it. 404 while no DLR has been received.
-     * all=true returns a JSON array with every DLR received for the id, oldest first ([] when none).
+     * Only the DLR, exactly as CPaaS / the provider sent it: the original text, byte for byte (same key order,
+     * spacing and escaping). 404 while no DLR has been received.
+     * status=submitted|sent|delivered|read|failed|rejected|... returns the DLR sent for that one status.
+     * all=true returns a JSON array of every DLR received for the id, oldest first ([] when none).
+     * Header X-DLR-Processing-Status says ACCEPTED, or REJECTED for a DLR that arrived but could not be processed.
      */
-    @GetMapping("/{messageId}/json")
+    @GetMapping(value = "/{messageId}/json", produces = MediaType.APPLICATION_JSON_VALUE)
     public org.springframework.http.ResponseEntity<?> dlrJson(@PathVariable String messageId,
-                                                              @RequestParam(defaultValue = "false") boolean all) {
+                                                              @RequestParam(defaultValue = "false") boolean all,
+                                                              @RequestParam(required = false) String status) {
         if (all) {
-            return org.springframework.http.ResponseEntity.ok(queryService.dlrJsonAll(messageId));
+            return org.springframework.http.ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
+                    .body("[" + String.join(",", queryService.dlrTextAll(messageId)) + "]");
         }
-        com.fasterxml.jackson.databind.JsonNode dlr = queryService.dlrJson(messageId);
-        if (dlr == null) {
+        com.smsframework.dlr.entity.DlrEvent e;
+        String notFound;
+        if (status != null && !status.isBlank()) {
+            e = queryService.dlrEventWithStatus(messageId, status);
+            notFound = "no DLR with status '" + status + "' received yet for this message_id";
+        } else {
+            e = queryService.dlrEvent(messageId);
+            if (e == null) {
+                // received but not accepted (e.g. a format the receiver did not recognise yet)
+                e = queryService.rejectedDlrEvent(messageId);
+            }
+            notFound = "no DLR received yet for this message_id";
+        }
+        if (e == null) {
             java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("message_id", messageId);
+            if (status != null && !status.isBlank()) {
+                body.put("status", status);
+            }
             body.put("received", false);
-            body.put("message", "no DLR received yet for this message_id");
+            body.put("message", notFound);
             return org.springframework.http.ResponseEntity.status(404).body(body);
         }
-        return org.springframework.http.ResponseEntity.ok(dlr);
+        boolean rejected = e.getProcessingStatus() == com.smsframework.dlr.domain.ProcessingStatus.REJECTED;
+        org.springframework.http.ResponseEntity.BodyBuilder ok = org.springframework.http.ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-DLR-Processing-Status", rejected ? "REJECTED" : "ACCEPTED");
+        if (rejected && e.getRejectionReason() != null) {
+            ok.header("X-DLR-Rejection-Reason", e.getRejectionReason().replaceAll("[\\r\\n]", " "));
+        }
+        return ok.body(queryService.rawDlrText(e));
     }
 
     /**
-     * DLR JSON for many ids in one call: body {"message_ids":[...]}, response a JSON array in the same order,
-     * with null for an id that has no DLR yet.
+     * DLR text for many ids in one call: body {"message_ids":[...]}, response a JSON array in the same order,
+     * each element exactly as received, with null for an id that has no DLR yet.
      */
-    @PostMapping(value = "/json", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public List<com.fasterxml.jackson.databind.JsonNode> dlrJsonBulk(@RequestBody java.util.Map<String, List<String>> body) {
-        return queryService.dlrJsonBulk(body == null ? null : body.get("message_ids"));
+    @PostMapping(value = "/json", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    public org.springframework.http.ResponseEntity<String> dlrJsonBulk(@RequestBody java.util.Map<String, List<String>> body) {
+        List<String> texts = queryService.dlrTextBulk(body == null ? null : body.get("message_ids"));
+        return org.springframework.http.ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
+                .body("[" + texts.stream().map(t -> t == null ? "null" : t).collect(java.util.stream.Collectors.joining(",")) + "]");
     }
 
     /** Current DLR state for one message. received=false / status=PENDING when nothing valid arrived yet. */

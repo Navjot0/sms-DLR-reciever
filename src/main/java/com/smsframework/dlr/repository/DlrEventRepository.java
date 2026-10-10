@@ -24,13 +24,13 @@ public class DlrEventRepository {
     private static final String COLUMNS = """
             source, message_id, provider_message_id, part_number, external_message_id, correlation_id, campaign_id, request_id, provider_event_id,
             mobile, sender, service, provider_status, normalized_status, status_code, error_code, error_reason,
-            submit_at, dlr_received_at, entity_id, template_id, units, raw_payload, processing_status,
+            submit_at, dlr_received_at, entity_id, template_id, units, raw_payload, raw_body, processing_status,
             processing_note, rejection_reason, dedup_key, duplicate_of, receiver_instance""";
 
     private static final String VALUES = """
             :source, :messageId, :providerMessageId, :partNumber, :externalMessageId, :correlationId, :campaignId, :requestId, :providerEventId,
             :mobile, :sender, :service, :providerStatus, :normalizedStatus, :statusCode, :errorCode, :errorReason,
-            :submitAt, :dlrReceivedAt, :entityId, :templateId, :units, CAST(:rawPayload AS jsonb), :processingStatus,
+            :submitAt, :dlrReceivedAt, :entityId, :templateId, :units, CAST(:rawPayload AS jsonb), :rawBody, :processingStatus,
             :processingNote, :rejectionReason, :dedupKey, :duplicateOf, :receiverInstance""";
 
     private static final String SELECT = "SELECT id, " + COLUMNS + ", created_at, updated_at FROM dlr_events ";
@@ -171,6 +171,7 @@ public class DlrEventRepository {
                 .addValue("templateId", e.getTemplateId())
                 .addValue("units", e.getUnits())
                 .addValue("rawPayload", e.getRawPayload())
+                .addValue("rawBody", e.getRawBody())
                 .addValue("processingStatus", e.getProcessingStatus().name())
                 .addValue("processingNote", e.getProcessingNote())
                 .addValue("rejectionReason", e.getRejectionReason())
@@ -205,6 +206,7 @@ public class DlrEventRepository {
         e.setTemplateId(rs.getString("template_id"));
         e.setUnits(getInteger(rs, "units"));
         e.setRawPayload(rs.getString("raw_payload"));
+        e.setRawBody(rs.getString("raw_body"));
         e.setProcessingStatus(ProcessingStatus.valueOf(rs.getString("processing_status")));
         e.setProcessingNote(rs.getString("processing_note"));
         e.setRejectionReason(rs.getString("rejection_reason"));

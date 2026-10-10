@@ -107,4 +107,59 @@ class RcsPlatformWebhookIntegrationTest extends AbstractIntegrationTest {
         assertThat(getJson("/api/v1/dlr/3b8a319d-0d29-4ed4-8b6d-5e0b84dcb92b/json").get("status").asText())
                 .isEqualTo("delivered");
     }
+
+    @Test
+    void jsonApiReturnsThePlatformDlrEvenWhenItWasRejected() throws Exception {
+        // an RCS platform event the receiver cannot accept (no status anywhere): still stored with its message_id
+        String broken = """
+                {"event_type":"message_delivery","message_id":"rcs-rej-1","external_message_id":"x",
+                 "message":{"direction":"outbound","number":"919000000001"},"agent":{"name":"viagent"}}""";
+        assertThat(postDlr(broken, Map.of()).statusCode()).isEqualTo(400);
+
+        java.net.http.HttpResponse<String> r = get("/api/v1/dlr/rcs-rej-1/json");
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(readJson(r.body())).isEqualTo(readJson(broken));
+        assertThat(r.headers().firstValue("X-DLR-Processing-Status")).contains("REJECTED");
+        assertThat(r.headers().firstValue("X-DLR-Rejection-Reason").orElse("")).contains("status is missing");
+
+        // an accepted one is flagged ACCEPTED
+        postDlr(sample("rcs-platform-jio-failed.json"), Map.of());
+        java.net.http.HttpResponse<String> ok = get("/api/v1/dlr/337fe547-587c-4e06-afca-8278afd3d40e/json");
+        assertThat(ok.headers().firstValue("X-DLR-Processing-Status")).contains("ACCEPTED");
+        assertThat(readJson(ok.body())).isEqualTo(readJson(sample("rcs-platform-jio-failed.json")));
+    }
+
+    @Test
+    void jsonApiReturnsThePlatformDlrForEachStatus() {
+        String ev = """
+                {"event_type":"%s","message_id":"rcs-st-1","external_message_id":"op-9","corelation_id":"c-9",
+                 "status":"%s","timestamp":"2026-10-10T09:3%d:00Z",
+                 "message":{"direction":"outbound","number":"919000000009"},"agent":{"name":"jioagent"},
+                 "additional_data":{"provider_type":"jio"}}""";
+        String submitted = ev.formatted("message_dispatch", "Submitted", 1);
+        String sent = ev.formatted("message_dispatch", "sent", 2);
+        String delivered = ev.formatted("message_delivery", "delivered", 3);
+        String read = ev.formatted("message_read", "read", 4);
+        postDlr(submitted, Map.of());
+        postDlr(sent, Map.of());
+        postDlr(delivered, Map.of());
+        postDlr(read, Map.of());
+
+        assertThat(getJson("/api/v1/dlr/rcs-st-1/json?status=submitted")).isEqualTo(readJson(submitted));
+        assertThat(getJson("/api/v1/dlr/rcs-st-1/json?status=submit")).isEqualTo(readJson(submitted));
+        assertThat(getJson("/api/v1/dlr/rcs-st-1/json?status=sent")).isEqualTo(readJson(sent));
+        assertThat(getJson("/api/v1/dlr/rcs-st-1/json?status=DELIVERED")).isEqualTo(readJson(delivered));
+        assertThat(getJson("/api/v1/dlr/rcs-st-1/json?status=read")).isEqualTo(readJson(read));
+        assertThat(get("/api/v1/dlr/rcs-st-1/json?status=failed").statusCode()).isEqualTo(404);
+        assertThat(getJson("/api/v1/dlr/rcs-st-1/json?all=true")).hasSize(4);
+
+        // failed + rejected
+        String failed = ev.replace("rcs-st-1", "rcs-st-2").formatted("message_delivery", "failed", 5);
+        String rejected = ev.replace("rcs-st-1", "rcs-st-3").formatted("message_delivery", "rejected", 6);
+        postDlr(failed, Map.of());
+        postDlr(rejected, Map.of());
+        assertThat(getJson("/api/v1/dlr/rcs-st-2/json?status=failed")).isEqualTo(readJson(failed));
+        assertThat(getJson("/api/v1/dlr/rcs-st-3/json?status=rejected")).isEqualTo(readJson(rejected));
+        assertThat(getJson("/api/v1/dlr/rcs-st-3").get("status").asText()).isEqualTo("REJECTED");
+    }
 }

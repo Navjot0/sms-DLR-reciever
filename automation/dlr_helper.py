@@ -159,10 +159,12 @@ def wait_for_click(message_id: str, min_clicks: int = 1, url_key: str | None = N
         f"within {timeout}s; last clicks: {summary}")
 
 
-def get_dlr_payload(message_id: str, base_url: str = DLR_BASE_URL) -> dict | None:
+def get_dlr_payload(message_id: str, status: str | None = None, base_url: str = DLR_BASE_URL) -> dict | None:
     """Only the DLR JSON, exactly as CPaaS / the provider sent it (GET /api/v1/dlr/{id}/json),
-    or None while no DLR has been received. For "<id>:<n>" it is that recipient's own DLR."""
-    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/json", timeout=10)
+    or None while no DLR has been received. For "<id>:<n>" it is that recipient's own DLR.
+    status: the DLR for one particular status, e.g. "submitted", "sent", "delivered", "read", "failed", "rejected"."""
+    response = _session.get(f"{base_url}/api/v1/dlr/{message_id}/json",
+                            params={"status": status} if status else None, timeout=10)
     if response.status_code == 404:
         return None
     response.raise_for_status()
@@ -183,16 +185,18 @@ def get_dlr_payloads(message_ids: list[str], base_url: str = DLR_BASE_URL) -> li
     return response.json()
 
 
-def wait_for_dlr_payload(message_id: str, timeout: float = 120, poll_interval: float = 2,
+def wait_for_dlr_payload(message_id: str, status: str | None = None, timeout: float = 120, poll_interval: float = 2,
                          base_url: str = DLR_BASE_URL) -> dict:
-    """Polls until the DLR JSON for the id arrives and returns it; raises AssertionError on timeout."""
+    """Polls until the DLR JSON for the id (optionally: with that status) arrives and returns it;
+    raises AssertionError on timeout."""
     deadline = time.time() + timeout
     while True:
-        payload = get_dlr_payload(message_id, base_url=base_url)
+        payload = get_dlr_payload(message_id, status=status, base_url=base_url)
         if payload is not None:
             return payload
         if time.time() >= deadline:
-            raise AssertionError(f"No DLR received for message_id={message_id} within {timeout}s")
+            raise AssertionError(f"No DLR{' with status ' + status if status else ''} received for "
+                                 f"message_id={message_id} within {timeout}s")
         time.sleep(poll_interval)
 
 

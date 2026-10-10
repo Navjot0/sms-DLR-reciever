@@ -34,13 +34,14 @@ public class LiveRepository {
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, mobile, provider_status,
                        normalized_status, processing_status, coalesce(rejection_reason, processing_note) AS note,
-                       raw_payload::text AS raw, service
+                       raw_payload::text AS raw, raw_body, service
                 FROM dlr_events WHERE id > :as AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "STATUS", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("mobile"), rs.getString("provider_status"), rs.getString("normalized_status"),
                 rs.getString("processing_status"), rs.getString("note"),
-                null, null, null, null, null, null, null, rs.getString("service"), rs.getString("raw"))));
+                null, null, null, null, null, null, null, rs.getString("service"), rs.getString("raw"),
+                rs.getString("raw_body"))));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, billing_message_id, part_number, processing_status,
                        coalesce(rejection_reason, processing_note) AS note, transaction_type, units, total_amount, currency,
@@ -50,7 +51,7 @@ public class LiveRepository {
                 rs.getString("message_id"), rs.getString("billing_message_id"), integer(rs, "part_number"), null,
                 null, null, rs.getString("processing_status"), rs.getString("note"),
                 rs.getString("transaction_type"), integer(rs, "units"), plain(rs.getBigDecimal("total_amount")),
-                rs.getString("currency"), null, null, null, null, rs.getString("raw"))));
+                rs.getString("currency"), null, null, null, null, rs.getString("raw"), null)));
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, contact, processing_status,
                        processing_note, url_key, visited_count, device_type, raw_payload::text AS raw
@@ -59,7 +60,7 @@ public class LiveRepository {
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("contact"), null, null, rs.getString("processing_status"), rs.getString("processing_note"),
                 null, null, null, null, rs.getString("url_key"), integer(rs, "visited_count"),
-                rs.getString("device_type"), null, rs.getString("raw"))));
+                rs.getString("device_type"), null, rs.getString("raw"), null)));
         items.sort(Comparator.comparing(LiveFeedItem::createdAt).thenComparing(LiveFeedItem::id).reversed());
         return items.size() > limit ? items.subList(0, limit) : items;
     }

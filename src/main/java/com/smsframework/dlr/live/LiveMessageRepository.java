@@ -154,7 +154,7 @@ public class LiveMessageRepository {
 
     private List<Map<String, Object>> timeline(MapSqlParameterSource p, String partFilter) {
         List<Map<String, Object>> items = new ArrayList<>();
-        items.addAll(jdbc.query("SELECT id, created_at, part_number, mobile, provider_status, normalized_status, raw_payload "
+        items.addAll(jdbc.query("SELECT id, created_at, part_number, mobile, provider_status, normalized_status, raw_payload, raw_body "
                 + "FROM dlr_events WHERE message_id = :m AND " + ACCEPTED + partFilter
                 + " ORDER BY id DESC LIMIT " + TIMELINE_LIMIT, p, (rs, n) -> item(rs, "STATUS", m -> {
                     m.put("mobile", rs.getString("mobile"));
@@ -195,6 +195,9 @@ public class LiveMessageRepository {
         m.put("part", rs.wasNull() ? null : part);
         filler.fill(m);
         try {
+            if (kind.equals("STATUS")) {
+                m.put("raw_text", rs.getString("raw_body"));     // exactly as received
+            }
             String raw = rs.getString("raw_payload");
             m.put("raw", raw == null ? null : objectMapper.readTree(raw));
         } catch (Exception e) {

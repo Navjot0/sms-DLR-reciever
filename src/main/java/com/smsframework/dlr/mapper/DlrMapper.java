@@ -139,7 +139,28 @@ public class DlrMapper {
 
     /** Raw DLR as received, as JSON. */
     public JsonNode rawDlr(DlrEvent e) {
-        return e == null ? null : parse(e.getRawPayload());
+        if (e == null) {
+            return null;
+        }
+        if (e.getRawBody() != null) {
+            try {
+                JsonNode n = objectMapper.readTree(e.getRawBody());
+                if (n != null && !n.isMissingNode()) {
+                    return n;      // same keys, same order as received
+                }
+            } catch (Exception ignored) {
+                // not JSON: fall back to what was stored
+            }
+        }
+        return parse(e.getRawPayload());
+    }
+
+    /** The DLR text exactly as received, or (rows stored before raw_body existed) the stored JSON. */
+    public String rawDlrText(DlrEvent e) {
+        if (e == null) {
+            return null;
+        }
+        return e.getRawBody() != null ? e.getRawBody() : e.getRawPayload();
     }
 
     private JsonNode parse(String json) {

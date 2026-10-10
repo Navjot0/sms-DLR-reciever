@@ -131,8 +131,13 @@ public class DlrProcessingService {
      * @param explicitSource source from header/query parameter (canonicalised) or null
      * @param body           raw request body exactly as received (may be null/empty/malformed)
      */
+    /** The callback body being processed on this thread, stored verbatim on every event it produces. */
+    private static final ThreadLocal<String> CURRENT_BODY = new ThreadLocal<>();
+
     public ProcessingResult process(String explicitSource, String body) {
         long start = System.nanoTime();
+        CURRENT_BODY.set(body == null || body.getBytes(StandardCharsets.UTF_8).length > properties.getApi().getMaxPayloadBytes()
+                ? null : sanitize(body));
         String sourceLabel = explicitSource != null && adapters.isKnownSource(explicitSource) ? explicitSource : UNKNOWN_SOURCE;
         try {
             ProcessingResult result = doProcess(explicitSource, body);
@@ -148,6 +153,7 @@ public class DlrProcessingService {
             metrics.latencyTimer(adapters.isKnownSource(sourceLabel) ? sourceLabel : UNKNOWN_SOURCE)
                     .record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
             MDC_KEYS.forEach(MDC::remove);
+            CURRENT_BODY.remove();
         }
     }
 
@@ -253,6 +259,7 @@ public class DlrProcessingService {
     private ProcessingResult persist(NormalizedDlr dlr, String raw) {
         String dedupKey = dedupKeyGenerator.generate(dlr);
         DlrEvent event = mapper.toEvent(dlr, raw, dedupKey, instanceId);
+        event.setRawBody(CURRENT_BODY.get());
 
         Optional<Long> inserted = events.insertIfAbsent(event);
         if (inserted.isEmpty()) {
@@ -405,6 +412,7 @@ public class DlrProcessingService {
         String src = source == null ? UNKNOWN_SOURCE : source;
         messageId = MessageIdParts.base(messageId, properties.getMessageIdPartSeparator());
         DlrEvent event = mapper.rejectedEvent(src, messageId, raw, reason, instanceId);
+        event.setRawBody(CURRENT_BODY.get());
         long id = events.insert(event);
         String label = adapters.isKnownSource(src) ? src : UNKNOWN_SOURCE;
         metrics.received(label);

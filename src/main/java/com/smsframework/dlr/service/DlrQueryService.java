@@ -85,18 +85,89 @@ public class DlrQueryService {
         return mapper.rawDlr(statusEvent(requestedId));
     }
 
+    /**
+     * The newest DLR that was received for this id but could not be processed (stored as REJECTED), or null.
+     * Lets automation still see exactly what the platform sent when the receiver did not accept it.
+     */
+    public DlrEvent rejectedDlrEvent(String requestedId) {
+        String base = normalizeId(requestedId);
+        List<DlrEvent> all = events.findByMessageId(base, properties.getApi().getMaxEventsPageSize());
+        for (int i = all.size() - 1; i >= 0; i--) {
+            if (all.get(i).getProcessingStatus() == ProcessingStatus.REJECTED) {
+                return all.get(i);
+            }
+        }
+        return null;
+    }
+
+    public com.fasterxml.jackson.databind.JsonNode rawDlr(DlrEvent e) {
+        return mapper.rawDlr(e);
+    }
+
+    /** The DLR text exactly as received (byte for byte), for the /json API. */
+    public String rawDlrText(DlrEvent e) {
+        return mapper.rawDlrText(e);
+    }
+
+    /** The event behind dlrJson(): accepted DLR that decided the status, or null. */
+    public DlrEvent dlrEvent(String requestedId) {
+        return statusEvent(requestedId);
+    }
+
+    /** Every received DLR for the id as the exact text, oldest first. */
+    public List<String> dlrTextAll(String requestedId) {
+        return receivedEvents(requestedId).stream().map(mapper::rawDlrText).toList();
+    }
+
+    /** dlrJsonBulk() as exact texts; null where no DLR yet. */
+    public List<String> dlrTextBulk(List<String> ids) {
+        return dlrEventsBulk(ids).stream().map(mapper::rawDlrText).toList();
+    }
+
     /** Every accepted DLR JSON for this id, oldest first (for "<id>:<n>": that recipient's only). */
     public List<com.fasterxml.jackson.databind.JsonNode> dlrJsonAll(String requestedId) {
+        return receivedEvents(requestedId).stream().map(mapper::rawDlr).toList();
+    }
+
+    /**
+     * Every DLR the platform sent for this id (accepted ones and ones that could not be processed), oldest first;
+     * exact repeats (DUPLICATE) are left out. For "<id>:<n>" only that recipient's.
+     */
+    private List<DlrEvent> receivedEvents(String requestedId) {
         MessageIdParts.Parsed parsed = MessageIdParts.parse(requestedId, properties.getMessageIdPartSeparator());
         return events.findByMessageId(parsed.messageId(), properties.getApi().getMaxEventsPageSize()).stream()
-                .filter(e -> e.getProcessingStatus() == ProcessingStatus.APPLIED
-                        || e.getProcessingStatus() == ProcessingStatus.IGNORED)
-                .filter(e -> !parsed.hasPart() || parsed.part().equals(e.getPartNumber()))
-                .map(mapper::rawDlr).toList();
+                .filter(e -> e.getProcessingStatus() != ProcessingStatus.DUPLICATE)
+                .filter(e -> !parsed.hasPart() || e.getPartNumber() == null || parsed.part().equals(e.getPartNumber()))
+                .toList();
+    }
+
+    /**
+     * The newest DLR for this id with the given status, exactly as sent, or null. The status matches the provider's
+     * own value (e.g. "Submitted", "sent", "DELIVRD", "failed") or the normalized one (SENT, DELIVERED, READ,
+     * FAILED, REJECTED, ...), case-insensitively; "submit" also matches "Submitted".
+     */
+    public DlrEvent dlrEventWithStatus(String requestedId, String status) {
+        String want = status.trim().toUpperCase(java.util.Locale.ROOT);
+        List<DlrEvent> list = receivedEvents(requestedId);
+        for (int i = list.size() - 1; i >= 0; i--) {
+            DlrEvent e = list.get(i);
+            String provider = e.getProviderStatus() == null ? "" : e.getProviderStatus().trim().toUpperCase(java.util.Locale.ROOT);
+            String normalized = e.getNormalizedStatus() == null ? "" : e.getNormalizedStatus();
+            if (want.equals(provider) || want.equals(normalized)
+                    || (want.equals("SUBMIT") && provider.startsWith("SUBMIT"))
+                    || (want.equals("SUBMITTED") && provider.equals("SUBMIT"))) {
+                return e;
+            }
+        }
+        return null;
     }
 
     /** DLR JSON for many ids, in request order; null for an id with no DLR yet. */
     public List<com.fasterxml.jackson.databind.JsonNode> dlrJsonBulk(List<String> ids) {
+        return dlrEventsBulk(ids).stream().map(mapper::rawDlr).toList();
+    }
+
+    private List<DlrEvent> dlrEventsBulk(List<String> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("message_ids must not be empty");
         }
@@ -114,11 +185,11 @@ public class DlrQueryService {
                 .filter(java.util.Objects::nonNull).distinct().toList();
         Map<String, DlrEvent> perPart = events.findStatusEventPerPart(unique, wantedParts).stream()
                 .collect(Collectors.toMap(e -> e.getMessageId() + sep + e.getPartNumber(), Function.identity(), (a, b) -> a));
-        List<com.fasterxml.jackson.databind.JsonNode> out = new ArrayList<>(ids.size());
+        List<DlrEvent> out = new ArrayList<>(ids.size());
         for (String id : ids) {
             MessageIdParts.Parsed parsed = MessageIdParts.parse(id, sep);
             DlrEvent own = parsed.hasPart() ? perPart.get(parsed.messageId() + sep + parsed.part()) : null;
-            out.add(mapper.rawDlr(own != null ? own : perMessage.get(parsed.messageId())));
+            out.add(own != null ? own : perMessage.get(parsed.messageId()));
         }
         return out;
     }

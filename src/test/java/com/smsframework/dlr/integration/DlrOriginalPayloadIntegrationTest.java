@@ -119,4 +119,27 @@ class DlrOriginalPayloadIntegrationTest extends AbstractIntegrationTest {
         assertThat(bulk.get(1).isNull()).isTrue();
         assertThat(bulk.get(2)).isEqualTo(readJson(delivered));
     }
+
+    @Test
+    void jsonApiReturnsTheDlrTextByteForByte() throws Exception {
+        // odd key order, spacing, escaped slashes and unicode: everything must come back untouched
+        String sent = "{\"status\":\"DELIVRD\",  \"message_id\":\"exact-1\",\"mobile\":\"919000000001\","
+                + "\"url\":\"https:\\/\\/gtls.in\\/x\",\"note\":\"caf\\u00e9\",\"code\":\"000\",\"units\":\"1\"}";
+        assertThat(postDlr(sent, Map.of("X-DLR-Source", "DEFAULT_SMS")).statusCode()).isEqualTo(200);
+
+        HttpResponse<String> r = get("/api/v1/dlr/exact-1/json");
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.body()).isEqualTo(sent);
+        assertThat(r.headers().firstValue("Content-Type").orElse("")).startsWith("application/json");
+
+        assertThat(get("/api/v1/dlr/exact-1/json?status=delivered").body()).isEqualTo(sent);
+        assertThat(get("/api/v1/dlr/exact-1/json?all=true").body()).isEqualTo("[" + sent + "]");
+        assertThat(postDlr("/api/v1/dlr/json", "{\"message_ids\":[\"exact-1\",\"none\"]}", Map.of()).body())
+                .isEqualTo("[" + sent + ",null]");
+
+        // the embedded "dlr" keeps the original key order too
+        JsonNode s = getJson("/api/v1/dlr/exact-1");
+        assertThat(s.get("dlr").fieldNames().next()).isEqualTo("status");
+        assertThat(getJson("/api/v1/dlr/live/feed").at("/items/0/raw_text").asText()).isEqualTo(sent);
+    }
 }
