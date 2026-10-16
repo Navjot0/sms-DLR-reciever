@@ -32,9 +32,43 @@ public class WebhookCaptureController {
     private static final int MAX_LIMIT = 200;
 
     private final WebhookCaptureRepository repository;
+    private final com.smsframework.dlr.capture.BatchEventRepository batchEvents;
 
-    public WebhookCaptureController(WebhookCaptureRepository repository) {
+    public WebhookCaptureController(WebhookCaptureRepository repository,
+                                    com.smsframework.dlr.capture.BatchEventRepository batchEvents) {
         this.repository = repository;
+        this.batchEvents = batchEvents;
+    }
+
+    /**
+     * Events of a bulk request in their original order (event_index 0..n-1): message id as sent, recipient,
+     * provider / normalized status, outcome (APPLIED, IGNORED, DUPLICATE, REJECTED, UNRECOGNIZED, MALFORMED, ERROR),
+     * reason and the event's original text. outcome= filters; offset/limit page (limit max 1000).
+     */
+    @GetMapping("/{captureId}/events")
+    public ResponseEntity<?> events(@PathVariable String captureId,
+                                    @RequestParam(required = false) String outcome,
+                                    @RequestParam(defaultValue = "0") int offset,
+                                    @RequestParam(defaultValue = "200") int limit) {
+        UUID id = parse(captureId);
+        if (id == null) {
+            return notFound("capture_id must be a UUID");
+        }
+        Map<String, Object> detail = repository.detail(id).orElse(null);
+        if (detail == null) {
+            return notFound("no capture " + captureId);
+        }
+        int n = Math.max(1, Math.min(limit, 1000));
+        int from = Math.max(0, offset);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("capture_id", id);
+        body.put("batch_id", detail.get("batch_id"));
+        body.put("batch_event_count", detail.get("batch_event_count"));
+        body.put("batch_summary", detail.get("batch_summary"));
+        body.put("total", batchEvents.count(id, outcome));
+        body.put("offset", from);
+        body.put("items", batchEvents.page(id, outcome, from, n));
+        return ResponseEntity.ok(body);
     }
 
     /**
@@ -49,9 +83,11 @@ public class WebhookCaptureController {
                                     @RequestParam(required = false) String source,
                                     @RequestParam(name = "message_id", required = false) String messageId,
                                     @RequestParam(required = false) String q,
+                                    @RequestParam(required = false) String kind,
+                                    @RequestParam(name = "batch_id", required = false) String batchId,
                                     @RequestParam(defaultValue = "50") int limit) {
         int n = Math.max(1, Math.min(limit, MAX_LIMIT));
-        List<Map<String, Object>> items = repository.list(afterId, beforeId, status, source, messageId, q, n);
+        List<Map<String, Object>> items = repository.list(afterId, beforeId, status, source, messageId, q, kind, batchId, n);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("items", items);
         // cursor for the next poll: newest id seen (or the current one when nothing new)
@@ -69,7 +105,7 @@ public class WebhookCaptureController {
                                       @RequestParam(required = false) String source,
                                       @RequestParam(name = "before_id", required = false) Long beforeId,
                                       @RequestParam(defaultValue = "50") int limit) {
-        return list(null, beforeId, status, source, messageId, q, limit);
+        return list(null, beforeId, status, source, messageId, q, null, null, limit);
     }
 
     /** The newest capture (optionally for one message id): full detail. 404 when there is none. */

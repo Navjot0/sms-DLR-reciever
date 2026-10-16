@@ -27,15 +27,21 @@ public class LiveRepository {
 
     /** Events with id greater than the cursors (or the newest `limit` when cursors are 0), newest first. */
     public List<LiveFeedItem> feed(long afterStatus, long afterBilling, long afterClick, int limit) {
+        return feed(afterStatus, afterBilling, afterClick, 0, limit);
+    }
+
+    /** Same, plus one BATCH row per bulk-push request newer than afterRequest (its DLRs are not listed singly). */
+    public List<LiveFeedItem> feed(long afterStatus, long afterBilling, long afterClick, long afterRequest, int limit) {
         MapSqlParameterSource p = new MapSqlParameterSource()
                 .addValue("as", afterStatus).addValue("ab", afterBilling).addValue("ac", afterClick)
-                .addValue("limit", limit);
+                .addValue("ar", afterRequest).addValue("limit", limit);
         List<LiveFeedItem> items = new ArrayList<>();
         items.addAll(jdbc.query("""
                 SELECT id, created_at, source, message_id, provider_message_id, part_number, mobile, provider_status,
                        normalized_status, processing_status, coalesce(rejection_reason, processing_note) AS note,
                        raw_payload::text AS raw, raw_body, service
-                FROM dlr_events WHERE id > :as AND processing_status NOT IN ('DUPLICATE', 'REJECTED') ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
+                FROM dlr_events WHERE id > :as AND processing_status NOT IN ('DUPLICATE', 'REJECTED')
+                  AND batch_capture_id IS NULL ORDER BY id DESC LIMIT :limit""", p, (rs, n) -> new LiveFeedItem(
                 "STATUS", rs.getLong("id"), rs.getObject("created_at", OffsetDateTime.class), rs.getString("source"),
                 rs.getString("message_id"), rs.getString("provider_message_id"), integer(rs, "part_number"),
                 rs.getString("mobile"), rs.getString("provider_status"), rs.getString("normalized_status"),
@@ -61,6 +67,15 @@ public class LiveRepository {
                 rs.getString("contact"), null, null, rs.getString("processing_status"), rs.getString("processing_note"),
                 null, null, null, null, rs.getString("url_key"), integer(rs, "visited_count"),
                 rs.getString("device_type"), null, rs.getString("raw"), rs.getString("raw_body"))));
+        items.addAll(jdbc.query("""
+                SELECT id, capture_id, received_at, detected_source, batch_id, batch_event_count,
+                       batch_summary::text AS summary, interpretation_status
+                FROM webhook_requests WHERE id > :ar AND batch_event_count IS NOT NULL ORDER BY id DESC LIMIT :limit""",
+                p, (rs, n) -> new LiveFeedItem("BATCH", rs.getLong("id"), rs.getObject("received_at", OffsetDateTime.class),
+                        rs.getString("detected_source"), null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null, null, null, null,
+                        rs.getString("capture_id"), rs.getString("batch_id"), integer(rs, "batch_event_count"),
+                        rs.getString("summary"), rs.getString("interpretation_status"))));
         items.sort(Comparator.comparing(LiveFeedItem::createdAt).thenComparing(LiveFeedItem::id).reversed());
         return items.size() > limit ? items.subList(0, limit) : items;
     }

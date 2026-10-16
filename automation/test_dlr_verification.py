@@ -177,3 +177,24 @@ def test_unknown_webhook_is_captured_but_never_counts_as_delivered():
     assert dlr["received"] is False and dlr["status"] == "PENDING"
     assert dlr["captures"]["total"] == 1
     assert verify_dlrs([message_id], expected_status="DELIVERED")["all_matched"] is False
+
+
+def test_bulk_push_every_message_is_verified_by_its_own_message_id():
+    from dlr_helper import get_messages, send_bulk_dlr, verify_bulk_dlr
+
+    batch = new_message_id()
+    events = [{"message_id": f"{batch}-{n:03d}", "mobile": f"9199990{n:05d}",
+               "status": "DELIVRD" if n % 5 else "UNDELIV", "code": "000" if n % 5 else "001",
+               "service": "T", "sender": "DUMMY"} for n in range(1, 26)]
+    ack = send_bulk_dlr(events, batch_id=batch)
+    assert ack["events"] == 25 and ack["interpreted"] == 25
+
+    results = verify_bulk_dlr(events, timeout=30, poll_interval=0.5)
+    assert [r["status"] for r in results].count("FAILED") == 5
+    assert all(r["record_state"] == "PARSED" for r in results)
+
+    rows = get_messages(batch_id=batch, limit=200)["items"]
+    assert len(rows) == 25 and {r["source_type"] for r in rows} == {"BULK"}
+
+    with pytest.raises(DlrVerificationError, match="DLR not found"):
+        verify_bulk_dlr([{"message_id": f"{batch}-missing", "status": "DELIVRD"}], timeout=1, poll_interval=0.5)

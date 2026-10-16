@@ -126,7 +126,7 @@ public class WebhookCaptureService {
         }
         ProcessingResult r;
         try {
-            r = processing.process(explicitSource, c.bodyText());
+            r = processing.process(explicitSource, c.bodyText(), c.captureId());
         } catch (DlrPersistenceException | DataAccessException e) {
             safeSave(c, new Interpretation(InterpretationStatus.ERROR, "database error during interpretation: "
                     + e.getMessage(), explicitSource, ex.messageId(), null, ex.recipient(), ex.status(), null, null, null));
@@ -140,6 +140,12 @@ public class WebhookCaptureService {
         }
         Interpretation i = classify(c, r, ex);
         save(c, i);
+        if (r.isBatch()) {
+            com.smsframework.dlr.service.BatchResult b = r.batch();
+            boolean skipped = Boolean.TRUE.equals(b.limitExceeded());
+            repository.updateBatch(c.captureId(), b.batchId(), b.events(), json(b.summary()),
+                    skipped ? 0 : b.interpreted(), skipped ? 0 : b.events() - b.interpreted());
+        }
         return new Outcome(r, i);
     }
 
@@ -148,10 +154,29 @@ public class WebhookCaptureService {
     }
 
     private Interpretation classify(CapturedRequest c, ProcessingResult r, GenericFieldExtractor.Extracted ex) {
-        String resultJson = json(r.isMeta() ? r.meta() : r.isBilling() ? r.billing() : r.isClick() ? r.click() : r);
+        String resultJson = json(r.isMeta() ? r.meta() : r.isBilling() ? r.billing() : r.isClick() ? r.click()
+                : r.isBatch() ? r.batch() : r);
         List<String> ids = new ArrayList<>();
         InterpretationStatus status;
         String error = null;
+        if (r.isBatch()) {
+            com.smsframework.dlr.service.BatchResult b = r.batch();
+            if (Boolean.TRUE.equals(b.limitExceeded())) {
+                return new Interpretation(InterpretationStatus.TOO_LARGE, "bulk callback has " + b.events()
+                        + " events; dlr.bulk.max-events is " + b.maxEvents() + " -- captured, not interpreted",
+                        b.source(), null, null, null, null, null, null, resultJson);
+            }
+            int recognised = b.interpreted() + b.rejected();
+            status = b.events() == 0 ? InterpretationStatus.NO_DLR
+                    : recognised == 0 ? InterpretationStatus.UNRECOGNIZED
+                    : b.interpreted() == b.events() ? InterpretationStatus.INTERPRETED
+                    : b.interpreted() == 0 && b.rejected() == b.events() ? InterpretationStatus.INVALID_DLR
+                    : InterpretationStatus.PARTIAL;
+            error = b.events() == 0 ? "bulk callback with an empty event list" : null;
+            List<String> mids = b.messageIds() == null ? List.of() : b.messageIds();
+            return new Interpretation(status, error, b.source(), mids.isEmpty() ? null : mids.get(0), mids, null, null,
+                    null, null, resultJson);
+        }
         if (r.isMeta()) {
             MetaWebhookResult m = r.meta();
             m.results().forEach(it -> { if (it.messageId() != null) ids.add(it.messageId()); });

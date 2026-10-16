@@ -39,6 +39,8 @@ public class DlrEvent {
     private String rawPayload;
     /** The callback body exactly as received; null for rows stored before V11. */
     private String rawBody;
+    /** capture_id of the bulk request this DLR came in, null for single callbacks. */
+    private java.util.UUID batchCaptureId;
     private ProcessingStatus processingStatus;
     private String processingNote;
     private String rejectionReason;
@@ -96,6 +98,8 @@ public class DlrEvent {
     public void setUnits(Integer units) { this.units = units; }
     public String getRawBody() { return rawBody; }
     public void setRawBody(String rawBody) { this.rawBody = rawBody; }
+    public java.util.UUID getBatchCaptureId() { return batchCaptureId; }
+    public void setBatchCaptureId(java.util.UUID batchCaptureId) { this.batchCaptureId = batchCaptureId; }
     public String getRawPayload() { return rawPayload; }
     public void setRawPayload(String rawPayload) { this.rawPayload = rawPayload; }
     public ProcessingStatus getProcessingStatus() { return processingStatus; }

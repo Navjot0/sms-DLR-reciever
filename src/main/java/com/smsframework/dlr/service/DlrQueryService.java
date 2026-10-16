@@ -81,10 +81,18 @@ public class DlrQueryService {
                     return clickSummary.clicked() ? r.withClicks(clickSummary) : r;
                 });
         response = response.withDlr(mapper.rawDlr(statusEvent(requestedId)));
+        MessageIdParts.Parsed asked = MessageIdParts.parse(requestedId, properties.getMessageIdPartSeparator());
+        if (asked.hasPart() && !parts.isEmpty()) {
+            // one recipient of a bulk / multipart send: its own DLR decides, not the whole message
+            List<DlrEvent> own = events.findStatusEventPerPart(List.of(messageId), List.of(asked.part()));
+            response = own.isEmpty() ? response.asRecipientNotReceived() : response.withRecipient(own.get(0));
+        }
         DlrStatusResponse.CaptureSummary cs = captureSummary(requestedId);
         if (cs != null) {
             response = response.withCaptures(cs);
         }
+        response = response.withRecordState(recordStates(List.of(requestedId), response.received() ? List.of(requestedId)
+                : List.of()).get(requestedId));
         return parts.isEmpty() && requested == null ? response : response.withParts(parts.isEmpty() ? null : parts, requested);
     }
 
@@ -128,7 +136,12 @@ public class DlrQueryService {
     public DlrEvent rejectedDlrEvent(String requestedId) {
         String base = normalizeId(requestedId);
         List<DlrEvent> all = events.findByMessageId(base, properties.getApi().getMaxEventsPageSize());
+        boolean recipient = !base.equals(requestedId);
         for (int i = all.size() - 1; i >= 0; i--) {
+            if (recipient && !requestedId.equals(all.get(i).getProviderMessageId())
+                    && !requestedId.equals(all.get(i).getMessageId())) {
+                continue;      // "<id>:<n>": only that recipient's own rejected DLR
+            }
             if (all.get(i).getProcessingStatus() == ProcessingStatus.REJECTED) {
                 return all.get(i);
             }
@@ -238,8 +251,32 @@ public class DlrQueryService {
             if (!own.isEmpty()) {
                 return own.get(0);
             }
+            if (!events.messagesWithParts(List.of(parsed.messageId())).isEmpty()) {
+                return null;     // other recipients have their own DLRs; this one has none yet
+            }
         }
         return events.findStatusEventPerMessage(List.of(parsed.messageId())).stream().findFirst().orElse(null);
+    }
+
+    public static final String RECORD_PARSED = "PARSED";
+    public static final String RECORD_INVALID = "INVALID";
+    public static final String RECORD_CAPTURED = "CAPTURED_NOT_INTERPRETED";
+    public static final String RECORD_NOT_FOUND = "NOT_FOUND";
+
+    /** record_state per id: PARSED for the received ones, else INVALID / CAPTURED_NOT_INTERPRETED / NOT_FOUND. */
+    private Map<String, String> recordStates(List<String> ids, List<String> received) {
+        Map<String, String> out = new java.util.HashMap<>();
+        List<String> rest = ids.stream().filter(i -> !received.contains(i)).toList();
+        received.forEach(i -> out.put(i, RECORD_PARSED));
+        if (rest.isEmpty()) {
+            return out;
+        }
+        java.util.Set<String> invalid = events.idsWithRejected(rest);
+        java.util.Set<String> captured = captures.idsWithCaptures(rest);
+        for (String id : rest) {
+            out.put(id, invalid.contains(id) ? RECORD_INVALID : captured.contains(id) ? RECORD_CAPTURED : RECORD_NOT_FOUND);
+        }
+        return out;
     }
 
     public String normalizeId(String id) {
@@ -348,6 +385,8 @@ public class DlrQueryService {
                 .filter(java.util.Objects::nonNull).distinct().toList();
         Map<String, DlrEvent> perPart = events.findStatusEventPerPart(unique, wantedParts).stream()
                 .collect(Collectors.toMap(e -> e.getMessageId() + sep + e.getPartNumber(), Function.identity(), (a, b) -> a));
+        // messages whose DLRs are per recipient: "<id>:<n>" without its own DLR is not received yet
+        java.util.Set<String> perRecipient = wantedParts.isEmpty() ? java.util.Set.of() : events.messagesWithParts(unique);
         boolean requireBilling = request.billingRequired();
         boolean requireClick = request.clickRequired();
         boolean matching = expected != null || requireBilling || requireClick;
@@ -370,12 +409,20 @@ public class DlrQueryService {
                 results.add(new DlrVerificationResponse.Result(id, false, "PENDING", null, null, null, null,
                         b != null, b == null ? null : b.units(), b == null ? null : b.totalAmount(),
                         b == null ? null : b.currency(), c != null, c == null ? null : c.clicks(),
-                        matching ? Boolean.FALSE : null, null));
+                        matching ? Boolean.FALSE : null, null, null));
+                continue;
+            }
+            MessageIdParts.Parsed parsedId = MessageIdParts.parse(id, sep);
+            DlrEvent own = parsedId.hasPart() ? perPart.get(parsedId.messageId() + sep + parsedId.part()) : null;
+            if (parsedId.hasPart() && own == null && perRecipient.contains(parsedId.messageId())) {
+                missing++;
+                results.add(new DlrVerificationResponse.Result(id, false, "PENDING", null, null, null, null,
+                        b != null, b == null ? null : b.units(), b == null ? null : b.totalAmount(),
+                        b == null ? null : b.currency(), c != null, c == null ? null : c.clicks(),
+                        matching ? Boolean.FALSE : null, null, null));
                 continue;
             }
             received++;
-            MessageIdParts.Parsed parsedId = MessageIdParts.parse(id, sep);
-            DlrEvent own = parsedId.hasPart() ? perPart.get(parsedId.messageId() + sep + parsedId.part()) : null;
             DlrEvent dlrEvent = own != null ? own : perMessage.get(normalizeId(id));
             // a recipient's own DLR decides its status; otherwise the message's current status
             NormalizedStatus st = NormalizedStatus.parse(own != null ? own.getNormalizedStatus() : s.getNormalizedStatus());
@@ -398,7 +445,16 @@ public class DlrQueryService {
             results.add(new DlrVerificationResponse.Result(id, true, st.name(), providerStatus,
                     statusCode, s.getSource(), s.getCorrelationId(), b != null,
                     b == null ? null : b.units(), b == null ? null : b.totalAmount(), b == null ? null : b.currency(),
-                    c != null, c == null ? null : c.clicks(), isMatch, mapper.rawDlr(dlrEvent)));
+                    c != null, c == null ? null : c.clicks(), isMatch, mapper.rawDlr(dlrEvent), RECORD_PARSED));
+        }
+        // what the receiver has for each id that is not received: invalid DLR / captured but not a DLR / nothing
+        List<String> notReceived = results.stream().filter(r -> !r.received()).map(DlrVerificationResponse.Result::messageId).toList();
+        if (!notReceived.isEmpty()) {
+            Map<String, String> states = recordStates(notReceived, List.of());
+            results.replaceAll(r -> r.received() ? r : new DlrVerificationResponse.Result(r.messageId(), false, r.status(),
+                    r.providerStatus(), r.statusCode(), r.source(), r.correlationId(), r.billed(), r.billedUnits(),
+                    r.billedAmount(), r.currency(), r.clicked(), r.clickCount(), r.matched(), r.dlr(),
+                    states.get(r.messageId())));
         }
         return new DlrVerificationResponse(ids.size(), received, delivered, failed, expired, rejected, sent, unknown,
                 missing, billedCount, ids.size() - billedCount, clickedCount, ids.size() - clickedCount,

@@ -501,3 +501,98 @@ def send_raw_request(body: bytes | str, content_type: str | None = "application/
         h["Content-Type"] = content_type
     data = body.encode() if isinstance(body, str) else body
     return _session.request(method, f"{base_url}/api/v1/dlr/receive", data=data, params=params, headers=h, timeout=10)
+
+
+# --------------------------------------------------------------------------------------
+# Bulk-push DLRs: one request {"batchId": ..., "events": [...]} carrying many recipients' DLRs.
+# Each recipient stays queryable on its own: get_dlr("<id>:<n>"), verify_dlrs(["<id>:1", "<id>:2"]).
+# --------------------------------------------------------------------------------------
+
+def send_bulk_dlr(events: list[dict], batch_id: str | None = None, base_url: str = DLR_BASE_URL) -> dict:
+    """Posts one bulk callback; returns the acknowledgement (capture_id, events, applied, duplicate, ...)."""
+    body: dict = {"batchId": batch_id or str(uuid.uuid4()), "events": events}
+    response = _session.post(f"{base_url}/api/v1/dlr/receive", json=body, timeout=60)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_capture_events(capture_id: str, outcome: str | None = None, offset: int = 0, limit: int = 1000,
+                       base_url: str = DLR_BASE_URL) -> dict:
+    """Events of a bulk request in original order: {"total": n, "items": [{"index", "message_id", "recipient",
+    "provider_status", "normalized_status", "outcome", "reason", "raw_event"}, ...]}."""
+    params = {"offset": offset, "limit": limit}
+    if outcome:
+        params["outcome"] = outcome
+    response = _session.get(f"{base_url}/api/v1/webhooks/requests/{capture_id}/events", params=params, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def bulk_message_ids(events: list[dict]) -> list[str]:
+    """events[].message_id of a bulk test payload; fails when an event has none (nothing may be skipped silently)."""
+    ids = []
+    for i, event in enumerate(events):
+        message_id = event.get("message_id")
+        assert message_id, f"Missing message_id in test event #{i}: {event}"
+        ids.append(message_id)
+    return ids
+
+
+def get_messages(base_url: str = DLR_BASE_URL, **filters) -> dict:
+    """Individual messages (GET /api/v1/dlr/messages): one row per DLR, single or split out of a bulk request.
+    Filters: message_id, message_id_like, mobile, status, batch_id, source_type (SINGLE/BULK), from, to,
+    capture_id, processing_status, offset, limit. Returns {"items": [...], "has_more": bool, ...}."""
+    response = _session.get(f"{base_url}/api/v1/dlr/messages", params=filters, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+# DLR field in a bulk test event -> field of GET /api/v1/dlr/{id}
+BULK_FIELD_MAP = {"status": "provider_status", "code": "status_code", "mobile": "mobile"}
+
+
+def verify_bulk_dlr(events: list[dict], timeout: float = 60, poll_interval: float = 1,
+                    fields: tuple = ("status", "code", "mobile"), check_payload: bool = True,
+                    base_url: str = DLR_BASE_URL) -> list[dict]:
+    """Verifies every event of a bulk push by its OWN message_id:
+      - a DLR record exists for each message_id (waits up to `timeout` for all of them),
+      - status / code / mobile (or `fields`) match what was sent,
+      - the stored DLR JSON equals the submitted event (check_payload).
+    Raises DlrVerificationError listing every missing or mismatching message (never stops at the first one);
+    returns the GET /api/v1/dlr/{id} results in the order of `events`."""
+    ids = bulk_message_ids(events)
+    deadline = time.time() + timeout
+    results: dict[str, dict] = {}
+    pending = list(dict.fromkeys(ids))
+    while pending:
+        for message_id in list(pending):
+            dlr = get_dlr(message_id, base_url=base_url)
+            if dlr.get("received"):
+                results[message_id] = dlr
+                pending.remove(message_id)
+            else:
+                results[message_id] = dlr
+        if not pending or time.time() >= deadline:
+            break
+        time.sleep(poll_interval)
+
+    problems = []
+    for event, message_id in zip(events, ids):
+        dlr = results.get(message_id) or {}
+        if not dlr.get("received"):
+            problems.append(f"{message_id}: DLR not found (record_state={dlr.get('record_state')}, "
+                            f"status={dlr.get('status')})")
+            continue
+        for field in fields:
+            if field not in event:
+                continue
+            got = dlr.get(BULK_FIELD_MAP.get(field, field))
+            if str(got) != str(event[field]):
+                problems.append(f"{message_id}: {field} expected {event[field]!r}, got {got!r}")
+        if check_payload:
+            payload = get_dlr_payload(message_id, base_url=base_url)
+            if payload != event:
+                problems.append(f"{message_id}: stored DLR JSON differs from the submitted event: {payload!r}")
+    if problems:
+        raise DlrVerificationError(f"{len(problems)} problem(s) in {len(ids)} bulk DLR(s):\n  " + "\n  ".join(problems))
+    return [results[m] for m in ids]

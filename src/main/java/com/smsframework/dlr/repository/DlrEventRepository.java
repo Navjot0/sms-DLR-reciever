@@ -25,13 +25,13 @@ public class DlrEventRepository {
             source, message_id, provider_message_id, part_number, external_message_id, correlation_id, campaign_id, request_id, provider_event_id,
             mobile, sender, service, provider_status, normalized_status, status_code, error_code, error_reason,
             submit_at, dlr_received_at, entity_id, template_id, units, raw_payload, raw_body, processing_status,
-            processing_note, rejection_reason, dedup_key, duplicate_of, receiver_instance""";
+            processing_note, rejection_reason, dedup_key, duplicate_of, receiver_instance, batch_capture_id""";
 
     private static final String VALUES = """
             :source, :messageId, :providerMessageId, :partNumber, :externalMessageId, :correlationId, :campaignId, :requestId, :providerEventId,
             :mobile, :sender, :service, :providerStatus, :normalizedStatus, :statusCode, :errorCode, :errorReason,
             :submitAt, :dlrReceivedAt, :entityId, :templateId, :units, CAST(:rawPayload AS jsonb), :rawBody, :processingStatus,
-            :processingNote, :rejectionReason, :dedupKey, :duplicateOf, :receiverInstance""";
+            :processingNote, :rejectionReason, :dedupKey, :duplicateOf, :receiverInstance, :batchCaptureId""";
 
     private static final String SELECT = "SELECT id, " + COLUMNS + ", created_at, updated_at FROM dlr_events ";
 
@@ -141,6 +141,32 @@ public class DlrEventRepository {
                 new MapSqlParameterSource("ids", messageIds).addValue("parts", parts), MAPPER);
     }
 
+    /** Which of these ids (as sent, or base ids) have a REJECTED DLR: recognised format, invalid content. */
+    public java.util.Set<String> idsWithRejected(List<String> ids) {
+        if (ids.isEmpty()) {
+            return java.util.Set.of();
+        }
+        java.util.Set<String> out = new java.util.HashSet<>();
+        jdbc.query("SELECT message_id, provider_message_id FROM dlr_events WHERE processing_status = 'REJECTED' "
+                        + "AND (message_id IN (:ids) OR provider_message_id IN (:ids))",
+                new MapSqlParameterSource("ids", ids), (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+                    out.add(rs.getString(1));
+                    out.add(rs.getString(2));
+                });
+        out.retainAll(ids);
+        return out;
+    }
+
+    /** Which of these messages have per-recipient ("&lt;id&gt;:&lt;n&gt;") DLRs. */
+    public java.util.Set<String> messagesWithParts(List<String> messageIds) {
+        if (messageIds.isEmpty()) {
+            return java.util.Set.of();
+        }
+        return new java.util.HashSet<>(jdbc.queryForList("SELECT DISTINCT message_id FROM dlr_events WHERE message_id IN (:ids) "
+                        + "AND part_number IS NOT NULL AND processing_status IN ('APPLIED', 'IGNORED')",
+                new MapSqlParameterSource("ids", messageIds), String.class));
+    }
+
     public List<DlrEvent> findByProcessingStatus(ProcessingStatus status, int limit) {
         return jdbc.query(SELECT + "WHERE processing_status = :s ORDER BY id DESC LIMIT :limit",
                 new MapSqlParameterSource().addValue("s", status.name()).addValue("limit", limit), MAPPER);
@@ -172,6 +198,7 @@ public class DlrEventRepository {
                 .addValue("units", e.getUnits())
                 .addValue("rawPayload", e.getRawPayload())
                 .addValue("rawBody", e.getRawBody())
+                .addValue("batchCaptureId", e.getBatchCaptureId())
                 .addValue("processingStatus", e.getProcessingStatus().name())
                 .addValue("processingNote", e.getProcessingNote())
                 .addValue("rejectionReason", e.getRejectionReason())
@@ -207,6 +234,7 @@ public class DlrEventRepository {
         e.setUnits(getInteger(rs, "units"));
         e.setRawPayload(rs.getString("raw_payload"));
         e.setRawBody(rs.getString("raw_body"));
+        e.setBatchCaptureId(rs.getObject("batch_capture_id", java.util.UUID.class));
         e.setProcessingStatus(ProcessingStatus.valueOf(rs.getString("processing_status")));
         e.setProcessingNote(rs.getString("processing_note"));
         e.setRejectionReason(rs.getString("rejection_reason"));

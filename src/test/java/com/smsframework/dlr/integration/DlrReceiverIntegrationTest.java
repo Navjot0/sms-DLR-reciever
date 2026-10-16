@@ -117,7 +117,7 @@ class DlrReceiverIntegrationTest extends AbstractIntegrationTest {
         HttpResponse<String> r = get("/api/v1/dlr/unknown");
         assertThat(r.statusCode()).isEqualTo(200);
         assertThat(JSON.readTree(r.body())).isEqualTo(JSON.readTree("""
-                {"message_id":"unknown","received":false,"status":"PENDING"}"""));
+                {"message_id":"unknown","received":false,"status":"PENDING","record_state":"NOT_FOUND"}"""));
     }
 
     // ------------------------------------------------------------------ state transitions / idempotency

@@ -17,6 +17,7 @@ Supported out of the box: **Default SMS DLR** (`DEFAULT_SMS`), **WebEngage SMS D
 - [Live UI](#live-ui)
 - [Architecture](#architecture)
 - [Universal webhook capture](#universal-webhook-capture)
+- [Bulk-push DLRs](#bulk-push-dlrs)
 - [API](#api)
 - [Normalization and status mapping](#normalization-and-status-mapping)
 - [Correlation](#correlation)
@@ -289,6 +290,110 @@ curl  localhost:8080/api/v1/webhooks/requests/5d3c9ab1-a6d1-4eaf-bba4-b65d61cfa1
 - `GET /api/v1/dlr/{id}` adds `captures` (`total`, `by_interpretation_status`, `latest_capture_id`, `latest_interpretation_status`, `latest_received_at`) when requests carrying that id were captured. It never changes `received` / `status`.
 - `GET /api/v1/dlr/{id}/json`: when no DLR (accepted or rejected) exists, it falls back to the newest **uninterpreted** capture for that id and returns its body exactly as received with its original content type and `X-DLR-Processing-Status: UNRECOGNIZED`, `X-Capture-Id`. `?all=true` and `?status=` still return DLRs only.
 - Python helpers: `list_captures`, `get_capture`, `get_capture_raw`, `get_latest_capture`, `wait_for_capture`, `send_raw_request` in `automation/dlr_helper.py`.
+
+---
+
+## Bulk-push DLRs
+
+One HTTP callback may carry hundreds or thousands of DLRs. It is posted to the same `/api/v1/dlr/receive`:
+
+```json
+{"batchId":"17d787a3-7a53-406b-b4b8-59c6397bebd0","events":[
+  {"message_id":"eec423c8-42f5-473b-b895-d5430fadb0b0:886","service":"T","sender":"DUMMY","mobile":"918999615701",
+   "status":"DELIVRD","code":"000","submit_at":"2026-10-15 15:22:37","dlr_received_at":"2026-10-15 15:22:37",
+   "entity_id":"17011580464447946654","template_id":"540723621824","units":"1","correlation_id":null},
+  ...]}
+```
+
+1. **The whole request is captured first** (`webhook_requests`, exact bytes, same as every callback). Acknowledged only
+   after that commit; 503 when it cannot be stored.
+2. **Detection.** A JSON object with an array in one of `dlr.bulk.event-fields` (default `events`, `dlrs`, `records`,
+   `deliveryReports`, `delivery_reports`), or a top-level JSON array of objects. `batchId` / `batch_id` is optional. A
+   payload without such an array (no `events`, or `events` not an array) is a normal single callback; `"events": []` is
+   an empty batch (`NO_DLR`). Billing (`event_type: billing`), Meta and email batches keep their own handling.
+3. **Every event on its own.** Each event goes through the normal DLR adapters, multipart rule (`<id>:<n>`),
+   idempotency and state machine. An unknown, malformed or invalid event never blocks its siblings. A recipient's
+   outcome is judged against **that recipient's** previous status, so 1,000 recipients of one campaign are 1,000
+   `APPLIED` DLRs.
+4. **Every event is kept** in `webhook_batch_events` with the parent `capture_id`, `batch_id`, `event_index` (original
+   position), the message id exactly as sent (`...:886`), recipient, provider / normalized status, outcome and the
+   event's **original text** (cut out of the request, spacing and escapes untouched). Outcomes: `APPLIED`, `IGNORED`
+   (no change for that recipient), `DUPLICATE`, `REJECTED` (recognised format, invalid content), `UNRECOGNIZED`,
+   `MALFORMED` (not a JSON object), `ERROR` (database error for that event only). No status is invented for unknown events.
+5. **Idempotency per event, not per batch.** A retried or overlapping batch is captured again (new `capture_id`); its
+   events already recorded become `DUPLICATE`, new ones are applied. Concurrent copies of the same batch store each
+   event once.
+6. **Volume.** Events are written `dlr.bulk.chunk-size` (500) per transaction with JDBC batch inserts; a chunk that fails
+   is retried event by event, so one bad row only fails itself. The body limit is `DLR_MAX_PAYLOAD_BYTES` (10 MB);
+   batches above `dlr.bulk.max-events` (50,000) are captured but not interpreted (`TOO_LARGE`).
+
+Acknowledgement (200 once captured; it describes interpretation, not delivery):
+
+```json
+{"captured":true,"capture_id":"1655e537-...","batch_id":"17d787a3-...","interpretation_status":"PARTIAL",
+ "events":116,"interpreted":115,"applied":115,"ignored":0,"duplicate":0,"rejected":0,"unrecognized":1,"malformed":0,"failed":0}
+```
+
+Capture `interpretation_status`: `INTERPRETED` (every event a DLR), `PARTIAL`, `INVALID_DLR` (all invalid),
+`UNRECOGNIZED` (no event recognised), `NO_DLR` (empty), `TOO_LARGE`.
+
+**Per recipient.** Each recipient is independently queryable: `GET /api/v1/dlr/<id>:886`, `/json`, and `POST /verify`
+with `<id>:<n>` use that recipient's own DLR. A recipient without its own DLR is `received: false` / `PENDING` even when
+other recipients of the same message have DLRs.
+
+**Inspecting a batch.**
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/webhooks/requests/{captureId}` | Request detail incl. `batch`, `batch_id`, `batch_event_count`, `batch_summary` |
+| `GET` | `/api/v1/webhooks/requests/{captureId}/events?outcome=&offset=&limit=` | Events in original order (≤1000 per page) |
+| `GET` | `/api/v1/webhooks/requests/{captureId}/raw` | The whole batch exactly as received |
+
+**Live UI.** The live feed shows **one row per bulk request** (batch id, event count, outcome counts) instead of one
+row per recipient; **Open batch** opens it in *Incoming requests* with an **Events** tab: every event in order with
+message id (opens the message lookup), recipient, provider status, status, outcome, reason and its original JSON. The
+JSON / Raw body tabs show the complete request unchanged. Stats tiles and charts still count every recipient DLR.
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `DLR_BULK_ENABLED` | `true` | `false` = treat bulk payloads as single (unrecognised) callbacks |
+| `DLR_BULK_MAX_EVENTS` | `50000` | Larger batches are captured but not interpreted |
+| `DLR_BULK_CHUNK_SIZE` | `500` | Events per database transaction |
+
+Migration `V14__bulk_batches.sql` adds `webhook_batch_events`, `webhook_requests.batch_id / batch_event_count /
+batch_summary` and `dlr_events.batch_capture_id`. Retention deletes batch events with the rest after 7 days.
+
+Python: `send_bulk_dlr(events, batch_id=None)`, `get_capture_events(capture_id, outcome=None)`,
+`verify_bulk_dlr(events)`, `bulk_message_ids(events)`, `get_messages(**filters)`.
+
+### Bulk Received and Individual Messages
+
+Two views (UI tabs, and APIs behind them):
+
+| View | API | One row per |
+|---|---|---|
+| **Bulk received** | `GET /api/v1/webhooks/requests?kind=bulk[&batch_id=..]` | bulk HTTP request: received at, batch id, `batch_event_count`, `processed_event_count`, `failed_event_count`, capture id |
+| **Individual messages** | `GET /api/v1/dlr/messages` | DLR event, from single callbacks **and** split out of bulk requests |
+
+Bulk-received actions open the request's Raw body, Headers, Query parameters or Events, or copy the original body.
+`processed` = events stored as DLRs (applied / ignored / duplicate); `failed` = the rest (invalid, unknown format,
+not an object, database error), each still listed with its reason.
+
+`GET /api/v1/dlr/messages` filters server-side and pages with `offset` / `limit` (max 200, `has_more`):
+`message_id` (exact: as sent, or the base id for all its recipients), `message_id_like` (partial), `mobile` (partial),
+`status` (provider `DELIVRD` or normalized `DELIVERED`), `batch_id`, `source_type` (`SINGLE` / `BULK`), `from` / `to`
+(ISO date-time), `capture_id`, `processing_status`. Each row: `received_at`, `message_id`, `mobile`, `status` (as the
+provider sent it), `normalized_status`, `code`, `batch_id`, `source_type`, `event_index`, `capture_id`,
+`processing_status` (what the receiver did) with `processing_note`, and `raw_event` (the event's original text, unknown
+fields included). Events without a message id (uncorrelated) and single callbacks no adapter understands but that carry
+a message id are listed too, so nothing is hidden.
+
+**record_state.** `GET /api/v1/dlr/{id}` and every `POST /verify` result carry `record_state`, separate from the
+delivery `status`: `PARSED` (DLR recognised and stored), `INVALID` (recognised format, invalid or incomplete),
+`CAPTURED_NOT_INTERPRETED` (a request with that id was captured but is no DLR the receiver understands), `NOT_FOUND`.
+
+Migration `V15__individual_messages.sql`: `webhook_requests.processed_event_count / failed_event_count`,
+`webhook_batch_events.status_code`, and indexes for the message view (event ↔ DLR links, batch id, recipient).
 
 ---
 

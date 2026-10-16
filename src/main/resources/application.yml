@@ -176,6 +176,16 @@ dlr:
     # Stored as "***" (the configured API-key header is always masked as well)
     masked-headers: ${DLR_CAPTURE_MASKED_HEADERS:authorization,proxy-authorization,cookie,set-cookie,x-api-key,x-auth-token,x-access-token,x-hub-signature-256,x-dlr-signature}
 
+  # Bulk push: one request carrying many DLRs, e.g. {"batchId":"..","events":[{..DLR..},{..DLR..}]} or a top-level
+  # JSON array. The request is captured unchanged; every event is then interpreted, de-duplicated and stored on its own.
+  bulk:
+    enabled: ${DLR_BULK_ENABLED:true}
+    event-fields: [events, dlrs, records, deliveryReports, delivery_reports]   # field holding the event array
+    batch-id-fields: [batchId, batch_id, batchID, BatchId]
+    top-level-arrays: true
+    max-events: ${DLR_BULK_MAX_EVENTS:50000}     # larger batches are captured but not interpreted (TOO_LARGE)
+    chunk-size: ${DLR_BULK_CHUNK_SIZE:500}       # events written per database transaction
+
   # Automatic clean-up: webhook captures, status DLRs, message states, billing events and clicks older than `days` are deleted.
   # Runs one minute after start-up and then every `interval-ms` (1 hour), in batches of `batch-size` rows.
   retention:

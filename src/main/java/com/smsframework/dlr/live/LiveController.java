@@ -51,11 +51,13 @@ public class LiveController {
     public LiveFeedResponse feed(@RequestParam(name = "after_status", defaultValue = "0") long afterStatus,
                                  @RequestParam(name = "after_billing", defaultValue = "0") long afterBilling,
                                  @RequestParam(name = "after_click", defaultValue = "0") long afterClick,
+                                 @RequestParam(name = "after_request", defaultValue = "0") long afterRequest,
                                  @RequestParam(defaultValue = "100") int limit) {
         int capped = Math.max(1, Math.min(limit, 500));
         LiveFeedResponse.Cursor cursor = new LiveFeedResponse.Cursor(
-                repository.maxId("dlr_events"), repository.maxId("dlr_billing_events"), repository.maxId("dlr_click_events"));
-        return new LiveFeedResponse(repository.feed(afterStatus, afterBilling, afterClick, capped), cursor);
+                repository.maxId("dlr_events"), repository.maxId("dlr_billing_events"), repository.maxId("dlr_click_events"),
+                repository.maxId("webhook_requests"));
+        return new LiveFeedResponse(repository.feed(afterStatus, afterBilling, afterClick, afterRequest, capped), cursor);
     }
 
     @GetMapping(value = "/api/v1/dlr/live/stats", produces = MediaType.APPLICATION_JSON_VALUE)

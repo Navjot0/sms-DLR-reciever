@@ -108,9 +108,12 @@
   .hidden { display: none !important; }
   #feedBody td:nth-child(-n+3) { white-space: nowrap; }
   .rawc { display: inline-flex; align-items: flex-start; gap: 6px; }
+  .sort-head { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: inherit; cursor: pointer; }
+  .sort-head:hover { color: var(--text); }
   .copy-btn { font-size: 11px; padding: 1px 7px; line-height: 1.5; white-space: nowrap; }
   .copy-btn.ok { color: var(--good-ink); border-color: var(--good); }
   button[disabled] { opacity: .45; cursor: not-allowed; }
+  tr.batch-row td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   .copy-btn.fail { color: var(--critical-ink); border-color: var(--critical); }
   details.raw pre { min-width: 460px; max-width: 680px; max-height: 420px; white-space: pre; overflow: auto; }
   @media (max-width: 640px) { details.raw pre { min-width: 0; max-width: 80vw; } }
@@ -196,6 +199,8 @@
       <button class="tab active" data-tab="feed">Live feed</button>
       <button class="tab" data-tab="lookup">Message lookup</button>
       <button class="tab" data-tab="verify">Bulk verify</button>
+      <button class="tab" data-tab="bulk">Bulk received</button>
+      <button class="tab" data-tab="messages">Individual messages</button>
       <button class="tab" data-tab="incoming">Incoming requests</button>
     </div>
 
@@ -214,13 +219,16 @@
           <option>READ</option><option>REJECTED</option><option>SENT</option>
         </select>
         <input type="text" id="searchF" placeholder="Filter by message id, mobile, email, status…" style="min-width:260px">
+        <select id="feedSort" aria-label="Sort by received time">
+          <option value="desc">Newest first</option><option value="asc">Oldest first</option>
+        </select>
         <span class="spacer"></span>
         <span class="muted" id="feedCount"></span>
         <button id="clearFeed">Clear</button>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Received</th><th>Category</th><th>Type</th><th>Message ID</th><th>Mobile / email</th>
+          <thead><tr><th><button type="button" id="feedSortHead" class="sort-head" title="Sort by received time">Received <span id="feedSortArrow">▼</span></button></th><th>Category</th><th>Type</th><th>Message ID</th><th>Mobile / email</th>
             <th>Status</th><th>Details</th><th>Raw</th></tr></thead>
           <tbody id="feedBody"></tbody>
         </table>
@@ -259,6 +267,54 @@
         <thead><tr><th>Message ID</th><th>Received</th><th>Status</th><th>Provider status</th><th>Billed</th>
           <th>Clicks</th><th>Matched</th></tr></thead>
         <tbody id="verifyBody"></tbody></table></div>
+    </div>
+
+    <!-- Bulk received: one row per bulk-push request, exactly as received -->
+    <div id="tab-bulk" class="hidden">
+      <div class="toolbar">
+        <input type="text" id="bulkBatch" placeholder="Batch ID" style="min-width:260px">
+        <button class="primary" id="bulkSearch">Search</button>
+        <button id="bulkReset">Reset</button>
+        <span class="spacer"></span>
+        <span class="muted" id="bulkCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Received at</th><th>Batch ID</th><th>Total events</th><th>Processed</th><th>Failed</th>
+            <th>Capture ID</th><th>Actions</th></tr></thead>
+          <tbody id="bulkBody"></tbody>
+        </table>
+        <div class="empty" id="bulkEmpty">No bulk requests received yet.</div>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><button id="bulkMore" class="hidden">Load older</button></div>
+    </div>
+
+    <!-- Individual messages: one row per DLR event, single callbacks and events split out of bulk requests -->
+    <div id="tab-messages" class="hidden">
+      <div class="toolbar">
+        <select id="msgIdMode" aria-label="Message ID match"><option value="exact">Message ID is</option><option value="like">Message ID contains</option></select>
+        <input type="text" id="msgId" placeholder="message_id" style="min-width:250px">
+        <input type="text" id="msgMobile" placeholder="Mobile" style="width:130px">
+        <input type="text" id="msgStatus" placeholder="Status (DELIVRD, FAILED…)" style="width:170px">
+        <input type="text" id="msgBatch" placeholder="Batch ID" style="width:180px">
+        <select id="msgSource" aria-label="Source type"><option value="">Single + bulk</option><option value="SINGLE">Single</option><option value="BULK">Bulk</option></select>
+        <label>From <input type="datetime-local" id="msgFrom"></label>
+        <label>To <input type="datetime-local" id="msgTo"></label>
+        <button class="primary" id="msgSearch">Search</button>
+        <button id="msgReset">Reset</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Received at</th><th>Message ID</th><th>Mobile</th><th>Status</th><th>Error code</th><th>Batch ID</th>
+            <th>Source</th><th>#</th><th>Capture ID</th><th>Processing</th><th>Actions</th></tr></thead>
+          <tbody id="msgBody"></tbody>
+        </table>
+        <div class="empty" id="msgEmpty">No messages match.</div>
+      </div>
+      <div class="toolbar" style="margin-top:8px">
+        <button id="msgPrev">‹ Newer</button><button id="msgNext">Older ›</button>
+        <span class="muted" id="msgCount"></span>
+      </div>
     </div>
 
     <!-- Incoming requests: every HTTP request captured on /api/v1/dlr/receive, whatever its format -->
@@ -329,7 +385,7 @@
   const CAT = { DEFAULT_SMS: ["Default SMS", "var(--c-sms)"], WEBENGAGE: ["WebEngage", "var(--c-we)"], SHORT_URL: ["Short URL", "var(--c-url)"], META: ["Meta WhatsApp", "var(--c-meta)"], RCS: ["RCS", "var(--c-rcs)"], EMAIL: ["Email", "var(--c-email)"] };
   const catOf = (it) => it.kind === "CLICK" ? "SHORT_URL" : (it.source || "");
   const catTag = (k) => CAT[k] ? `<span class="kind"><i style="background:${CAT[k][1]}"></i>${CAT[k][0]}</span>` : esc(k);
-  const KIND = { STATUS: "Status DLR", BILLING: "Billing", CLICK: "Click" };
+  const KIND = { STATUS: "Status DLR", BILLING: "Billing", CLICK: "Click", BATCH: "Bulk request" };
   const kindTag = (k) => esc(KIND[k] || k);
 
   // ---------- theme ----------
@@ -350,9 +406,11 @@
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => showTab(t.dataset.tab));
   function showTab(name) {
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-    ["feed", "lookup", "verify", "incoming"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
+    ["feed", "lookup", "verify", "bulk", "messages", "incoming"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== name));
     store.set("dlr.tab", name);
     if (name === "incoming" && typeof loadIncoming === "function") loadIncoming();
+    if (name === "bulk" && typeof loadBulk === "function") loadBulk(false);
+    if (name === "messages" && typeof loadMessages === "function") loadMessages();
   }
 
   // ---------- health ----------
@@ -511,7 +569,7 @@
   const OVERLAP = 20;   // re-read a few ids back: transactions can commit slightly out of id order
   async function loadFeed() {
     let url = "/api/v1/dlr/live/feed?limit=200";
-    if (cursor) url += `&after_status=${Math.max(0, cursor.status - OVERLAP)}&after_billing=${Math.max(0, cursor.billing - OVERLAP)}&after_click=${Math.max(0, cursor.click - OVERLAP)}`;
+    if (cursor) url += `&after_status=${Math.max(0, cursor.status - OVERLAP)}&after_billing=${Math.max(0, cursor.billing - OVERLAP)}&after_click=${Math.max(0, cursor.click - OVERLAP)}&after_request=${Math.max(0, (cursor.request || 0) - OVERLAP)}`;
     try {
       const r = await api(url);
       const fresh = [];
@@ -623,25 +681,56 @@
       d.querySelector("pre").innerHTML = it ? jsonView(it.raw_text, it.raw) : "";
     } else openRaw.delete(key);
   }, true);
+  if (store.get("dlr.feedSort", "desc") === "asc") $("feedSort").value = "asc";
+  function setFeedSort(v) { $("feedSort").value = v; store.set("dlr.feedSort", v); renderFeed(new Set()); }
+  $("feedSort").onchange = () => setFeedSort($("feedSort").value);
+  $("feedSortHead").onclick = () => setFeedSort($("feedSort").value === "asc" ? "desc" : "asc");
   function renderFeed(newKeys) {
     const cats = new Set([...document.querySelectorAll(".catF:checked")].map(c => c.value));
     const showBilling = $("billingF").checked, st = $("statusF").value, q = $("searchF").value.trim().toLowerCase();
-    const rows = feed.filter(it => cats.has(catOf(it)) && (showBilling || it.kind !== "BILLING")
-      && (!st || it.normalized_status === st)
-      && (!q || [it.message_id, it.provider_message_id, it.mobile, it.provider_status, it.normalized_status, it.url_key]
+    // bulk requests: shown unless their single source is a category that is switched off
+    const batchVisible = (it) => !CAT[it.source] || cats.has(it.source);
+    const rows = feed.filter(it => (it.kind === "BATCH" ? batchVisible(it) : cats.has(catOf(it)))
+      && (showBilling || it.kind !== "BILLING")
+      && (!st || it.kind === "BATCH" || it.normalized_status === st)
+      && (!q || [it.message_id, it.provider_message_id, it.mobile, it.provider_status, it.normalized_status, it.url_key,
+                 it.batch_id, it.capture_id]
             .some(v => v && String(v).toLowerCase().includes(q))));
+    const dir = $("feedSort").value === "asc" ? 1 : -1;
+    const ts = (it) => { const t = Date.parse(it.created_at); return isNaN(t) ? 0 : t; };
+    rows.sort((a, b) => dir * (ts(a) - ts(b) || a.id - b.id));
+    $("feedSortArrow").textContent = dir === 1 ? "▲" : "▼";
     $("feedBody").innerHTML = rows.slice(0, 500).map(it => {
       const key = it.kind + ":" + it.id;
+      if (it.kind === "BATCH") return batchRow(it, newKeys.has(key));
       const full = it.provider_message_id || it.message_id;   // "<id>:<n>" = this recipient of a bulk campaign
       const mid = full ? `<a class="msg mono" data-id="${esc(full)}" title="Open this recipient">${esc(full)}</a>` : `<span class="muted">—</span>`;
       const status = it.kind === "STATUS"
         ? `${statusBadge(it.normalized_status)} <span class="muted mono">${esc(it.provider_status || "")}</span>` : "";
-      return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono">${fmt(it.created_at)}</td><td>${catTag(catOf(it))}</td><td>${kindTag(it.kind)}</td>`
+      return `<tr class="${newKeys.has(key) ? "new" : ""}"><td class="mono" title="${esc(it.created_at)}">${fmt(it.created_at)}</td><td>${catTag(catOf(it))}</td><td>${kindTag(it.kind)}</td>`
         + `<td>${mid}</td><td class="mono">${esc(it.mobile || "")}</td><td>${status}</td>`
         + `<td>${details(it)}</td><td>${rawCell(it, key)}</td></tr>`;
     }).join("");
     $("feedEmpty").classList.toggle("hidden", rows.length > 0);
     $("feedCount").textContent = `${rows.length} shown · ${feed.length} loaded`;
+  }
+  // one row per bulk-push request: batch id, event count and how its events were interpreted
+  function batchSummaryChips(sm) {
+    if (!sm) return "";
+    const chip = (n, label, cls) => n ? `<span class="badge ${cls}" style="margin-right:4px">${esc(n)} ${label}</span>` : "";
+    return chip(sm.applied + sm.ignored, "DLRs", "b-good") + chip(sm.duplicate, "duplicate", "b-neutral")
+      + chip(sm.rejected, "invalid", "b-bad") + chip(sm.unrecognized, "unknown", "b-warn")
+      + chip(sm.malformed, "malformed", "b-warn") + chip(sm.failed, "failed", "b-bad")
+      + (sm.limit_exceeded ? `<span class="badge b-bad">✕ over ${esc(sm.max_events)} events, not interpreted</span>` : "");
+  }
+  function batchRow(it, isNew) {
+    const n = it.event_count ?? 0;
+    return `<tr class="batch-row${isNew ? " new" : ""}"><td class="mono" title="${esc(it.created_at)}">${fmt(it.created_at)}</td>`
+      + `<td>${it.source && CAT[it.source] ? catTag(it.source) : `<span class="muted">${esc(it.source || "—")}</span>`}</td>`
+      + `<td><b>Bulk</b> <span class="muted">· ${n0(n)} event${n === 1 ? "" : "s"}</span></td>`
+      + `<td class="mono">${it.batch_id ? `<span class="muted">batch</span> ${esc(it.batch_id)}` : '<span class="muted">no batch id</span>'}</td>`
+      + `<td></td><td colspan="2">${batchSummaryChips(it.batch_summary)} ${interpBadge(it.interpretation_status)}</td>`
+      + `<td><button type="button" class="copy-btn" data-open-batch="${esc(it.capture_id)}" title="Open the request and its events">Open batch</button></td></tr>`;
   }
   document.querySelectorAll(".catF").forEach(c => c.onchange = () => renderFeed(new Set()));
   $("billingF").onchange = () => renderFeed(new Set());
@@ -649,6 +738,8 @@
   $("searchF").oninput = () => renderFeed(new Set());
   $("clearFeed").onclick = () => { feed = []; renderFeed(new Set()); };
   $("feedBody").onclick = (e) => {
+    const ob = e.target.closest("button[data-open-batch]");
+    if (ob) { showTab("incoming"); inc.sub = "events"; openCapture(ob.dataset.openBatch); return; }
     const c = e.target.closest("button[data-copy-key]");
     if (c) { const it = feed.find(f => f.kind + ":" + f.id === c.dataset.copyKey); copyJson(c, it && it.raw, it && it.raw_text); return; }
     const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id);
@@ -801,10 +892,21 @@
     const a = e.target.closest("a.msg"); if (a) { openLookup(a.dataset.id); return; }
     const tr = e.target.closest("tr[data-cid]"); if (tr) openCapture(tr.dataset.cid);
   };
-  async function openCapture(id) {
+  async function openCapture(id, wantSub) {
+    const isNew = inc.sel !== id || !inc.ev;
+    if (isNew) inc.ev = { items: [], total: 0, outcome: "", open: new Set() };
     inc.sel = id;
     document.querySelectorAll("#incBody tr").forEach(t => t.classList.toggle("sel", t.dataset.cid === id));
-    try { inc.detail = await api(`/api/v1/webhooks/requests/${encodeURIComponent(id)}`); renderCapture(); }
+    try {
+      inc.detail = await api(`/api/v1/webhooks/requests/${encodeURIComponent(id)}`);
+      if (inc.detail.batch) {
+        if (isNew) inc.sub = wantSub || "events";   // a bulk request opens on its events
+        if (!inc.ev.items.length) await loadBatchEvents(false);
+      }
+      else if (inc.sub === "events") inc.sub = "json";
+      if (wantSub && (wantSub !== "events" || inc.detail.batch)) inc.sub = wantSub;
+      renderCapture();
+    }
     catch (e) { $("incDetail").innerHTML = `<div class="incd err">Could not load capture: ${esc(e.message)}</div>`; }
   }
   function parsedJson(d) {
@@ -817,6 +919,46 @@
       : `<div class="empty">None</div>`;
   }
   const monoOr = (v) => v == null || v === "" ? "" : `<span class="mono">${esc(v)}</span>`;
+  // events of a bulk request, in their original order (paged)
+  const OUTCOME_CLS = { APPLIED: "b-good", IGNORED: "b-neutral", DUPLICATE: "b-neutral", REJECTED: "b-bad",
+                        UNRECOGNIZED: "b-warn", MALFORMED: "b-warn", ERROR: "b-bad" };
+  const outcomeBadge = (o) => `<span class="badge ${OUTCOME_CLS[o] || "b-neutral"}">${esc(o)}</span>`;
+  async function loadBatchEvents(more) {
+    const ev = inc.ev, id = inc.sel;
+    const p = new URLSearchParams({ offset: more ? ev.items.length : 0, limit: 200 });
+    if (ev.outcome) p.set("outcome", ev.outcome);
+    try {
+      const r = await api(`/api/v1/webhooks/requests/${encodeURIComponent(id)}/events?${p}`);
+      if (id !== inc.sel) return;
+      ev.items = more ? ev.items.concat(r.items) : r.items;
+      ev.total = r.total;
+      ev.error = null;
+    } catch (e) { ev.error = e.message; }
+  }
+  function batchEventsHtml(d) {
+    const ev = inc.ev, sm = d.batch_summary || {};
+    const opts = ["", "APPLIED", "IGNORED", "DUPLICATE", "REJECTED", "UNRECOGNIZED", "MALFORMED", "ERROR"]
+      .map(o => `<option value="${o}"${ev.outcome === o ? " selected" : ""}>${o ? o.toLowerCase() : "all outcomes"}</option>`).join("");
+    const rows = ev.items.map(x => {
+      const open = ev.open.has(x.index);
+      const mid = x.message_id ? `<a class="msg mono" data-id="${esc(x.message_id)}" title="Open in message lookup">${esc(x.message_id)}</a>` : '<span class="muted">—</span>';
+      return `<tr><td class="mono muted">${x.index}</td><td>${mid}</td><td class="mono">${esc(x.recipient || "")}</td>`
+        + `<td class="mono muted">${esc(x.provider_status || "")}</td><td>${x.normalized_status ? statusBadge(x.normalized_status) : '<span class="muted">—</span>'}</td>`
+        + `<td>${outcomeBadge(x.outcome)}${x.reason ? `<div class="note">${esc(x.reason)}</div>` : ""}</td>`
+        + `<td><span class="rawc"><details class="raw" data-ev="${x.index}"${open ? " open" : ""}><summary>JSON</summary>`
+        + `<pre class="json mono">${open ? jsonView(x.raw_event) : ""}</pre></details>`
+        + `<button type="button" class="copy-btn" data-copy-ev="${x.index}" title="Copy this event exactly as received">Copy</button></span></td></tr>`;
+    }).join("");
+    return `<div class="toolbar" style="margin-top:10px">${batchSummaryChips(sm)}
+        <span class="muted">${n0(sm.events ?? d.batch_event_count)} events${d.batch_id ? ` · batch <span class="mono">${esc(d.batch_id)}</span>` : ""}</span>
+        <span class="spacer"></span><select id="evOutcome" aria-label="Outcome">${opts}</select></div>
+      ${ev.error ? `<div class="err">Could not load events: ${esc(ev.error)}</div>` : ""}
+      <div class="table-wrap"><table><thead><tr><th>#</th><th>Message ID</th><th>Recipient</th><th>Provider status</th>
+        <th>Status</th><th>Outcome</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
+        ${ev.items.length ? "" : '<div class="empty">No events.</div>'}</div>
+      <div class="toolbar" style="margin-top:8px"><span class="muted">${n0(ev.items.length)} of ${n0(ev.total)} shown</span>
+        ${ev.items.length < ev.total ? '<button type="button" id="evMore">Load more</button>' : ""}</div>`;
+  }
   function renderCapture() {
     const d = inc.detail; if (!d) return;
     const json = parsedJson(d), isJson = json !== undefined;
@@ -834,6 +976,7 @@
         : `<div class="note">Not valid JSON — showing the raw text.</div><pre class="body mono">${esc(d.body_text ?? d.body_base64 ?? "")}</pre>`;
     } else if (inc.sub === "headers") body = multiTable(d.headers) + `<div class="note">Credential headers are stored masked (***).</div>`;
     else if (inc.sub === "query") body = `<div class="note mono">${esc(d.query_string ? "?" + d.query_string : "(no query string)")}</div>` + multiTable(d.query_params);
+    else if (inc.sub === "events" && d.batch) body = batchEventsHtml(d);
     else body = `<pre class="body json mono">${jsonView(null, d.interpretation)}</pre>`;
     const sub = (k, l) => `<button type="button" class="subtab${inc.sub === k ? " active" : ""}" data-sub="${k}">${l}</button>`;
     $("incDetail").innerHTML = `<div class="incd">
@@ -844,7 +987,8 @@
         ["sender", `<span class="mono">${esc(d.remote_address)}</span>`]])}
       ${kv([["DLR status", dlrLine], ["source", d.detected_source ? catTag(d.detected_source) : "—"],
         ["message id", d.extracted_message_id ? `<a class="msg mono" data-id="${esc(d.extracted_message_id)}">${esc(d.extracted_message_id)}</a>` : "—"],
-        ["all message ids", d.message_ids && d.message_ids.length > 1 ? `<span class="mono">${esc(d.message_ids.join(", "))}</span>` : ""],
+        ["all message ids", d.batch ? "" : d.message_ids && d.message_ids.length > 1 ? `<span class="mono">${esc(d.message_ids.join(", "))}</span>` : ""],
+        ["bulk request", d.batch ? `${n0(d.batch_event_count)} events${d.batch_id ? ` · batch <span class="mono">${esc(d.batch_id)}</span>` : ""}` : ""],
         ["recipient", monoOr(d.extracted_recipient)], ["provider status", monoOr(d.provider_status)],
         ["processing note", esc(d.interpretation_error)], ["dlr event id", esc(d.dlr_event_id)]])}</div>
       <div class="toolbar" style="margin-top:10px">
@@ -852,7 +996,7 @@
         <button type="button" class="copy-btn" id="incCopyJson" ${isJson ? "" : 'disabled title="Body is not valid JSON"'}>Copy as JSON</button>
         <button type="button" class="copy-btn" id="incDownload" ${d.body_truncated ? "disabled" : ""}>Download body</button>
       </div>
-      <div class="subtabs">${sub("json", "JSON")}${sub("raw", "Raw body")}${sub("headers", "Headers")}${sub("query", "Query")}${sub("interp", "Interpretation")}</div>
+      <div class="subtabs">${d.batch ? sub("events", `Events (${n0(d.batch_event_count)})`) : ""}${sub("json", "JSON")}${sub("raw", "Raw body")}${sub("headers", "Headers")}${sub("query", "Query")}${sub("interp", "Interpretation")}</div>
       ${body}</div>`;
   }
   async function rawResponse(id) {
@@ -865,11 +1009,31 @@
     btn.textContent = ok ? "Copied ✓" : "Copy failed"; btn.classList.add(ok ? "ok" : "fail");
     setTimeout(() => { btn.textContent = label; btn.classList.remove("ok", "fail"); }, 1500);
   }
+  $("incDetail").addEventListener("change", async (e) => {
+    if (e.target.id !== "evOutcome") return;
+    inc.ev.outcome = e.target.value; inc.ev.open.clear();
+    await loadBatchEvents(false); renderCapture();
+  });
+  $("incDetail").addEventListener("toggle", (e) => {
+    const d = e.target; if (!d.matches || !d.matches("details[data-ev]")) return;
+    const idx = +d.dataset.ev;
+    if (d.open) {
+      inc.ev.open.add(idx);
+      const x = inc.ev.items.find(i => i.index === idx);
+      d.querySelector("pre").innerHTML = x ? jsonView(x.raw_event) : "";
+    } else inc.ev.open.delete(idx);
+  }, true);
   $("incDetail").addEventListener("click", async (e) => {
     const d = inc.detail; if (!d) return;
     const t = e.target.closest("button, a.msg"); if (!t) return;
     if (t.matches("a.msg")) { openLookup(t.dataset.id); return; }
     if (t.dataset.sub) { inc.sub = t.dataset.sub; renderCapture(); return; }
+    if (t.id === "evMore") { t.disabled = true; await loadBatchEvents(true); renderCapture(); return; }
+    if (t.dataset.copyEv !== undefined) {
+      const x = inc.ev.items.find(i => String(i.index) === t.dataset.copyEv);
+      flash(t, x != null && x.raw_event != null && await copyText(x.raw_event), "Copy");
+      return;
+    }
     if (t.id === "incCopyRaw") {
       // fetch the stored bytes again so the copy is exactly what was received
       let text = d.body_text;
@@ -888,6 +1052,121 @@
       } catch (err) { t.textContent = "Download failed"; }
     }
   });
+
+  // ---------- bulk received ----------
+  let bulk = { items: [], before: null };
+  function openCaptureTab(id, sub) { showTab("incoming"); openCapture(id, sub); }
+  async function loadBulk(more) {
+    const p = new URLSearchParams({ kind: "bulk", limit: "50" });
+    if ($("bulkBatch").value.trim()) p.set("batch_id", $("bulkBatch").value.trim());
+    if (more && bulk.before) p.set("before_id", bulk.before);
+    try {
+      const r = await api(`/api/v1/webhooks/requests?${p}`);
+      bulk.items = more ? bulk.items.concat(r.items) : r.items;
+      bulk.before = r.next_before_id;
+      $("bulkBody").innerHTML = bulk.items.map(x => `<tr>
+        <td class="mono">${fmt(x.received_at)}</td>
+        <td class="mono">${x.batch_id ? esc(x.batch_id) : '<span class="muted">—</span>'}</td>
+        <td>${n0(x.batch_event_count)}</td>
+        <td>${x.processed_event_count == null ? "" : `<span class="badge b-good">${n0(x.processed_event_count)}</span>`}</td>
+        <td>${x.failed_event_count ? `<span class="badge b-bad">${n0(x.failed_event_count)}</span>` : '<span class="muted">0</span>'}</td>
+        <td class="mono" title="${esc(x.capture_id)}">${esc(String(x.capture_id).slice(0, 8))}…</td>
+        <td style="white-space:nowrap">
+          <button type="button" class="copy-btn" data-bulk-open="raw" data-cid="${esc(x.capture_id)}">Original</button>
+          <button type="button" class="copy-btn" data-bulk-open="headers" data-cid="${esc(x.capture_id)}">Headers</button>
+          <button type="button" class="copy-btn" data-bulk-open="query" data-cid="${esc(x.capture_id)}">Query</button>
+          <button type="button" class="copy-btn" data-bulk-open="events" data-cid="${esc(x.capture_id)}">Events</button>
+          <button type="button" class="copy-btn" data-bulk-copy="${esc(x.capture_id)}">Copy body</button></td></tr>`).join("");
+      $("bulkEmpty").classList.toggle("hidden", bulk.items.length > 0);
+      $("bulkCount").textContent = `${n0(bulk.items.length)} shown`;
+      $("bulkMore").classList.toggle("hidden", !bulk.before);
+    } catch (e) {
+      $("bulkEmpty").classList.remove("hidden");
+      $("bulkEmpty").innerHTML = `<span class="err">Could not load bulk requests: ${esc(e.message)}</span>`;
+    }
+  }
+  $("bulkSearch").onclick = () => loadBulk(false);
+  $("bulkBatch").onkeydown = (e) => { if (e.key === "Enter") loadBulk(false); };
+  $("bulkReset").onclick = () => { $("bulkBatch").value = ""; loadBulk(false); };
+  $("bulkMore").onclick = () => loadBulk(true);
+  $("bulkBody").onclick = async (e) => {
+    const o = e.target.closest("button[data-bulk-open]");
+    if (o) { openCaptureTab(o.dataset.cid, o.dataset.bulkOpen); return; }
+    const c = e.target.closest("button[data-bulk-copy]");
+    if (c) {
+      let text = null;
+      try { text = await (await rawResponse(c.dataset.bulkCopy)).text(); } catch { text = null; }
+      flash(c, text != null && await copyText(text), "Copy body");
+    }
+  };
+
+  // ---------- individual messages ----------
+  let msgs = { items: [], offset: 0, more: false, open: new Set() };
+  const MSG_LIMIT = 50;
+  function msgQuery() {
+    const p = new URLSearchParams({ limit: MSG_LIMIT, offset: msgs.offset });
+    const id = $("msgId").value.trim();
+    if (id) p.set($("msgIdMode").value === "like" ? "message_id_like" : "message_id", id);
+    if ($("msgMobile").value.trim()) p.set("mobile", $("msgMobile").value.trim());
+    if ($("msgStatus").value.trim()) p.set("status", $("msgStatus").value.trim());
+    if ($("msgBatch").value.trim()) p.set("batch_id", $("msgBatch").value.trim());
+    if ($("msgSource").value) p.set("source_type", $("msgSource").value);
+    const iso = (v) => { const d = new Date(v); return isNaN(d) ? null : d.toISOString(); };
+    if ($("msgFrom").value && iso($("msgFrom").value)) p.set("from", iso($("msgFrom").value));
+    if ($("msgTo").value && iso($("msgTo").value)) p.set("to", iso($("msgTo").value));
+    return p;
+  }
+  const PROC_CLS = { APPLIED: "b-good", IGNORED: "b-neutral", DUPLICATE: "b-neutral", REJECTED: "b-bad",
+                     UNRECOGNIZED: "b-warn", MALFORMED: "b-warn", MALFORMED_JSON: "b-warn", NOT_JSON: "b-warn", ERROR: "b-bad" };
+  async function loadMessages() {
+    try {
+      const r = await api(`/api/v1/dlr/messages?${msgQuery()}`);
+      msgs.items = r.items; msgs.more = r.has_more; msgs.open = new Set();
+      $("msgBody").innerHTML = r.items.map((x, i) => `<tr>
+        <td class="mono">${fmt(x.received_at)}</td>
+        <td>${x.message_id ? `<a class="msg mono" data-id="${esc(x.message_id)}" title="Open in message lookup">${esc(x.message_id)}</a>` : '<span class="muted">— no message id</span>'}</td>
+        <td class="mono">${esc(x.mobile || "")}</td>
+        <td>${x.normalized_status ? statusBadge(x.normalized_status) : ""} <span class="mono muted">${esc(x.status || "")}</span></td>
+        <td class="mono">${esc(x.code || x.error_code || "")}</td>
+        <td class="mono">${esc(x.batch_id || "")}</td>
+        <td>${x.source_type === "BULK" ? '<span class="badge b-neutral">Bulk</span>' : '<span class="badge b-neutral">Single</span>'}</td>
+        <td class="mono muted">${x.event_index ?? ""}</td>
+        <td class="mono" title="${esc(x.capture_id || "")}">${x.capture_id ? esc(String(x.capture_id).slice(0, 8)) + "…" : ""}</td>
+        <td><span class="badge ${PROC_CLS[x.processing_status] || "b-neutral"}" title="${esc(x.processing_note || "")}">${esc(x.processing_status || "")}</span></td>
+        <td><div style="white-space:nowrap">
+          <button type="button" class="copy-btn" data-mcopy-id="${i}" ${x.message_id ? "" : "disabled"}>Copy ID</button>
+          <button type="button" class="copy-btn" data-mcopy-json="${i}">Copy JSON</button>
+          ${x.capture_id ? `<button type="button" class="copy-btn" data-mparent="${esc(x.capture_id)}" data-bulk="${x.source_type === "BULK"}">${x.source_type === "BULK" ? "Parent bulk" : "Request"}</button>` : ""}</div>
+          <details class="raw" data-mi="${i}"><summary>JSON</summary><pre class="json mono"></pre></details></td></tr>`).join("");
+      $("msgEmpty").classList.toggle("hidden", r.items.length > 0);
+      $("msgCount").textContent = r.items.length ? `${n0(msgs.offset + 1)}–${n0(msgs.offset + r.items.length)}${r.has_more ? "" : " (end)"}` : "";
+      $("msgPrev").disabled = msgs.offset === 0;
+      $("msgNext").disabled = !r.has_more;
+    } catch (e) {
+      $("msgBody").innerHTML = "";
+      $("msgEmpty").classList.remove("hidden");
+      $("msgEmpty").innerHTML = `<span class="err">Could not load messages: ${esc(e.message)}</span>`;
+    }
+  }
+  $("msgSearch").onclick = () => { msgs.offset = 0; loadMessages(); };
+  ["msgId", "msgMobile", "msgStatus", "msgBatch"].forEach(id => $(id).onkeydown = (e) => { if (e.key === "Enter") { msgs.offset = 0; loadMessages(); } });
+  $("msgReset").onclick = () => {
+    ["msgId", "msgMobile", "msgStatus", "msgBatch", "msgFrom", "msgTo"].forEach(id => $(id).value = "");
+    $("msgSource").value = ""; $("msgIdMode").value = "exact"; msgs.offset = 0; loadMessages();
+  };
+  $("msgPrev").onclick = () => { msgs.offset = Math.max(0, msgs.offset - MSG_LIMIT); loadMessages(); };
+  $("msgNext").onclick = () => { msgs.offset += MSG_LIMIT; loadMessages(); };
+  $("msgBody").addEventListener("toggle", (e) => {
+    const d = e.target; if (!d.matches || !d.matches("details[data-mi]")) return;
+    if (d.open) { const x = msgs.items[+d.dataset.mi]; d.querySelector("pre").innerHTML = x ? jsonView(x.raw_event) : ""; }
+  }, true);
+  $("msgBody").onclick = async (e) => {
+    const a = e.target.closest("a.msg"); if (a) { openLookup(a.dataset.id); return; }
+    const t = e.target.closest("button"); if (!t) return;
+    if (t.dataset.mcopyId !== undefined) { const x = msgs.items[+t.dataset.mcopyId]; flash(t, !!x && await copyText(x.message_id), "Copy ID"); }
+    else if (t.dataset.mcopyJson !== undefined) { const x = msgs.items[+t.dataset.mcopyJson]; flash(t, !!x && x.raw_event != null && await copyText(x.raw_event), "Copy JSON"); }
+    else if (t.dataset.mparent) openCaptureTab(t.dataset.mparent, t.dataset.bulk === "true" ? "events" : "json");
+  };
 
   // ---------- loop ----------
   async function refreshAll(resetFeed) {

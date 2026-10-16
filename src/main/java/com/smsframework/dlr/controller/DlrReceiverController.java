@@ -107,6 +107,19 @@ public class DlrReceiverController {
         if (r != null && r.isBilling()) {
             return reply.body(r.billing());
         }
+        if (r != null && r.isBatch()) {
+            // the request is captured; the counts say how its events were interpreted
+            Map<String, Object> ackBody = new LinkedHashMap<>();
+            ackBody.put("captured", true);
+            ackBody.put("capture_id", c.captureId().toString());
+            ackBody.put("batch_id", r.batch().batchId());
+            ackBody.put("interpretation_status", i.status().name());
+            ackBody.putAll(r.batch().summary());
+            if (i.error() != null) {
+                ackBody.put("note", i.error());
+            }
+            return reply.body(ackBody);
+        }
         if (r == null) {
             return reply.body(new DlrReceiveResponse(null, i.source(), i.messageId(), null, null, null, null,
                     i.error(), true, c.captureId().toString(), i.status().name(), i.messageId()));

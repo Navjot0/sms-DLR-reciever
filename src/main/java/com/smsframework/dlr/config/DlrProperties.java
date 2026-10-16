@@ -52,6 +52,7 @@ public class DlrProperties {
     private final Meta meta = new Meta();
     private final Retention retention = new Retention();
     private final Capture capture = new Capture();
+    private final Bulk bulk = new Bulk();
 
     // ------------------------------------------------------------------
 
@@ -344,6 +345,39 @@ public class DlrProperties {
     public Meta getMeta() { return meta; }
     public Retention getRetention() { return retention; }
     public Capture getCapture() { return capture; }
+    public Bulk getBulk() { return bulk; }
+
+    /**
+     * Bulk-push callbacks: one request carrying many DLRs, e.g. {"batchId":"..","events":[{..},{..}]} or a top-level
+     * JSON array. Each event is interpreted on its own; the request itself is captured unchanged.
+     */
+    public static class Bulk {
+        private boolean enabled = true;
+        /** Top-level fields holding the event array (first one present wins). */
+        private List<String> eventFields = new ArrayList<>(List.of("events", "dlrs", "records", "deliveryReports",
+                "delivery_reports"));
+        /** Top-level fields holding the batch id. */
+        private List<String> batchIdFields = new ArrayList<>(List.of("batchId", "batch_id", "batchID", "BatchId"));
+        /** Treat a top-level JSON array of objects as a batch too. */
+        private boolean topLevelArrays = true;
+        /** Larger batches are captured but not interpreted (interpretation TOO_LARGE). */
+        private int maxEvents = 50000;
+        /** Events written per database transaction. */
+        private int chunkSize = 500;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public List<String> getEventFields() { return eventFields; }
+        public void setEventFields(List<String> eventFields) { this.eventFields = eventFields; }
+        public List<String> getBatchIdFields() { return batchIdFields; }
+        public void setBatchIdFields(List<String> batchIdFields) { this.batchIdFields = batchIdFields; }
+        public boolean isTopLevelArrays() { return topLevelArrays; }
+        public void setTopLevelArrays(boolean topLevelArrays) { this.topLevelArrays = topLevelArrays; }
+        public int getMaxEvents() { return maxEvents; }
+        public void setMaxEvents(int maxEvents) { this.maxEvents = maxEvents; }
+        public int getChunkSize() { return chunkSize; }
+        public void setChunkSize(int chunkSize) { this.chunkSize = chunkSize; }
+    }
 
     /**
      * Universal webhook capture (webhook_requests): every callback is stored as received before any DLR

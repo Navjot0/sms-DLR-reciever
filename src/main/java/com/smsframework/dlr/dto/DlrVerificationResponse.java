@@ -47,6 +47,8 @@ public record DlrVerificationResponse(
             Integer clickCount,
             Boolean matched,
             /* The DLR exactly as the provider / CPaaS sent it (for "<id>:<n>": that recipient's own DLR). */
-            com.fasterxml.jackson.databind.JsonNode dlr) {
+            com.fasterxml.jackson.databind.JsonNode dlr,
+            /* PARSED | INVALID | CAPTURED_NOT_INTERPRETED | NOT_FOUND -- what the receiver has, not the delivery status */
+            String recordState) {
     }
 }

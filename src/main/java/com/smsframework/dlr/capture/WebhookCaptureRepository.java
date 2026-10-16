@@ -24,6 +24,7 @@ public class WebhookCaptureRepository {
             id, capture_id, received_at, http_method, request_path, query_string, content_type, body_size_bytes,
             body_truncated, body_encoding, remote_address, interpretation_status, interpretation_error, detected_source,
             extracted_message_id, extracted_recipient, provider_status, normalized_status, dlr_event_id,
+            batch_id, batch_event_count, batch_summary::text AS batch_summary_json, processed_event_count, failed_event_count,
             left(body_text, 300) AS body_preview""";
 
     private static final TypeReference<Map<String, List<String>>> MULTI_MAP = new TypeReference<>() { };
@@ -84,6 +85,19 @@ public class WebhookCaptureRepository {
                 WHERE capture_id = :id""", p);
     }
 
+    /** Bulk request: batch id, event count and per-outcome counts (derived columns; the raw body is untouched). */
+    public void updateBatch(UUID captureId, String batchId, int eventCount, String summaryJson) {
+        updateBatch(captureId, batchId, eventCount, summaryJson, null, null);
+    }
+
+    public void updateBatch(UUID captureId, String batchId, int eventCount, String summaryJson, Integer processed,
+                            Integer failed) {
+        jdbc.update("UPDATE webhook_requests SET batch_id = :b, batch_event_count = :n, batch_summary = CAST(:s AS jsonb), "
+                        + "processed_event_count = :p, failed_event_count = :f WHERE capture_id = :id",
+                new MapSqlParameterSource("id", captureId).addValue("b", trunc(clean(batchId), 255))
+                        .addValue("n", eventCount).addValue("s", summaryJson).addValue("p", processed).addValue("f", failed));
+    }
+
     /**
      * Newest first. afterId: only newer captures (live polling); beforeId: only older ones (load more).
      * status: an interpretation status, or the groups "interpreted" / "unrecognized" / "errors".
@@ -91,8 +105,23 @@ public class WebhookCaptureRepository {
      */
     public List<Map<String, Object>> list(Long afterId, Long beforeId, String status, String source, String messageId,
                                           String q, int limit) {
+        return list(afterId, beforeId, status, source, messageId, q, null, null, limit);
+    }
+
+    /** kind: "bulk" (requests split into events) or "single"; batchId: exact batch id. */
+    public List<Map<String, Object>> list(Long afterId, Long beforeId, String status, String source, String messageId,
+                                          String q, String kind, String batchId, int limit) {
         StringBuilder where = new StringBuilder("WHERE TRUE");
         MapSqlParameterSource p = new MapSqlParameterSource("limit", limit);
+        if ("bulk".equalsIgnoreCase(kind)) {
+            where.append(" AND batch_event_count IS NOT NULL");
+        } else if ("single".equalsIgnoreCase(kind)) {
+            where.append(" AND batch_event_count IS NULL");
+        }
+        if (batchId != null && !batchId.isBlank()) {
+            where.append(" AND batch_id = :batch");
+            p.addValue("batch", batchId.trim());
+        }
         if (afterId != null) {
             where.append(" AND id > :after");
             p.addValue("after", afterId);
@@ -177,6 +206,19 @@ public class WebhookCaptureRepository {
                 (rs, n) -> summary(rs)).stream().findFirst();
     }
 
+    /** Which of these ids appear in any captured request (as extracted id or among the ids of a bulk request). */
+    public java.util.Set<String> idsWithCaptures(List<String> ids) {
+        if (ids.isEmpty()) {
+            return java.util.Set.of();
+        }
+        java.util.Set<String> out = new java.util.HashSet<>(jdbc.queryForList("""
+                SELECT DISTINCT x FROM webhook_requests w, unnest(w.message_ids) x
+                WHERE w.message_ids && ARRAY[:ids]::text[] AND x IN (:ids)
+                UNION SELECT extracted_message_id FROM webhook_requests WHERE extracted_message_id IN (:ids)""",
+                new MapSqlParameterSource("ids", ids), String.class));
+        return out;
+    }
+
     /** Number of captures per interpretation status for these message ids. */
     public Map<String, Long> countsForMessage(List<String> messageIds) {
         Map<String, Long> m = new java.util.LinkedHashMap<>();
@@ -226,6 +268,17 @@ public class WebhookCaptureRepository {
         long ev = rs.getLong("dlr_event_id");
         m.put("dlr_event_id", rs.wasNull() ? null : ev);
         m.put("body_preview", rs.getString("body_preview"));
+        int bc = rs.getInt("batch_event_count");
+        if (!rs.wasNull()) {
+            m.put("batch", true);
+            m.put("batch_id", rs.getString("batch_id"));
+            m.put("batch_event_count", bc);
+            m.put("batch_summary", readTree(rs.getString("batch_summary_json")));
+            int pc = rs.getInt("processed_event_count");
+            m.put("processed_event_count", rs.wasNull() ? null : pc);
+            int fc = rs.getInt("failed_event_count");
+            m.put("failed_event_count", rs.wasNull() ? null : fc);
+        }
         return m;
     }
 

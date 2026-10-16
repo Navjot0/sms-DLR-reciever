@@ -78,7 +78,10 @@ public class DataRetentionService {
                 DELETE FROM dlr_click_events WHERE id IN (
                     SELECT id FROM dlr_click_events WHERE created_at < :cutoff ORDER BY id LIMIT :n)""");
 
-        // 4. raw webhook captures (immutable request log)
+        // 4. events of bulk requests, then the raw webhook captures (immutable request log)
+        more |= batch("webhook_batch_events", deleted, p, """
+                DELETE FROM webhook_batch_events WHERE id IN (
+                    SELECT id FROM webhook_batch_events WHERE created_at < :cutoff ORDER BY id LIMIT :n)""");
         more |= batch("webhook_requests", deleted, p, """
                 DELETE FROM webhook_requests WHERE id IN (
                     SELECT id FROM webhook_requests WHERE received_at < :cutoff ORDER BY id LIMIT :n)""");

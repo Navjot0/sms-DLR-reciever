@@ -66,7 +66,20 @@ public class DlrProcessingService {
     public record ProcessingResult(Long eventId, String source, String messageId, ProcessingStatus processingStatus,
                                    NormalizedStatus normalizedStatus, String currentStatus, String rejectionReason,
                                    String note, boolean payloadTooLarge, BillingResult billing, ClickResult click,
-                                   MetaWebhookResult meta) {
+                                   MetaWebhookResult meta, BatchResult batch) {
+
+        public ProcessingResult(Long eventId, String source, String messageId, ProcessingStatus processingStatus,
+                                NormalizedStatus normalizedStatus, String currentStatus, String rejectionReason,
+                                String note, boolean payloadTooLarge, BillingResult billing, ClickResult click,
+                                MetaWebhookResult meta) {
+            this(eventId, source, messageId, processingStatus, normalizedStatus, currentStatus, rejectionReason, note,
+                    payloadTooLarge, billing, click, meta, null);
+        }
+
+        /** True when this callback was a bulk push of many DLRs (see {@link #batch()}). */
+        public boolean isBatch() {
+            return batch != null;
+        }
 
         /** True when this callback was a Meta (WhatsApp) webhook (see {@link #meta()}). */
         public boolean isMeta() {
@@ -137,6 +150,25 @@ public class DlrProcessingService {
      */
     /** The callback body being processed on this thread, stored verbatim on every event it produces. */
     private static final ThreadLocal<String> CURRENT_BODY = new ThreadLocal<>();
+    /** capture_id of the webhook request being processed (links bulk events to their request). */
+    private static final ThreadLocal<java.util.UUID> CURRENT_CAPTURE = new ThreadLocal<>();
+
+    private com.smsframework.dlr.capture.BatchEventRepository batchEvents;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setBatchEvents(com.smsframework.dlr.capture.BatchEventRepository batchEvents) {
+        this.batchEvents = batchEvents;
+    }
+
+    /** Same as {@link #process(String, String)}, for a body captured as webhook request {@code captureId}. */
+    public ProcessingResult process(String explicitSource, String body, java.util.UUID captureId) {
+        CURRENT_CAPTURE.set(captureId);
+        try {
+            return process(explicitSource, body);
+        } finally {
+            CURRENT_CAPTURE.remove();
+        }
+    }
 
     public ProcessingResult process(String explicitSource, String body) {
         long start = System.nanoTime();
@@ -224,6 +256,12 @@ public class DlrProcessingService {
             return processBilling(billingAdapter.get(), explicitSource, json, rawForStorage);
         }
 
+        // 3c. Bulk push: {"batchId":..,"events":[{..},{..}]} or a top-level array -- every event on its own ------
+        BulkEnvelope bulk = properties.getBulk().isEnabled() ? bulkEnvelope(json) : null;
+        if (bulk != null) {
+            return processBulk(explicitSource, bulk);
+        }
+
         if (explicitSource == null && !sourceResolver.detectFromPayload()) {
             return unrecognized(UNKNOWN_SOURCE, adapters.peekMessageId(json), UNRECOGNIZED_UNKNOWN,
                     "DLR source not specified and payload detection is disabled");
@@ -259,9 +297,18 @@ public class DlrProcessingService {
     }
 
     private ProcessingResult persist(NormalizedDlr dlr, String raw) {
+        return persist(dlr, raw, CURRENT_BODY.get(), null);
+    }
+
+    /**
+     * @param rawBody        text stored as dlr_events.raw_body (the DLR exactly as received)
+     * @param batchCaptureId request the DLR came in when it was part of a bulk push, else null
+     */
+    private ProcessingResult persist(NormalizedDlr dlr, String raw, String rawBody, java.util.UUID batchCaptureId) {
         String dedupKey = dedupKeyGenerator.generate(dlr);
         DlrEvent event = mapper.toEvent(dlr, raw, dedupKey, instanceId);
-        event.setRawBody(CURRENT_BODY.get());
+        event.setRawBody(rawBody);
+        event.setBatchCaptureId(batchCaptureId);
 
         Optional<Long> inserted = events.insertIfAbsent(event);
         if (inserted.isEmpty()) {
@@ -446,6 +493,11 @@ public class DlrProcessingService {
     }
 
     private void recordMetricsAndLog(NormalizedDlr dlr, ProcessingResult r) {
+        recordMetrics(dlr, r);
+        logResult(dlr, r);
+    }
+
+    private void recordMetrics(NormalizedDlr dlr, ProcessingResult r) {
         switch (r.processingStatus()) {
             case DUPLICATE -> metrics.duplicate(dlr.getSource());
             case IGNORED -> {
@@ -456,7 +508,9 @@ public class DlrProcessingService {
             }
             default -> metrics.status(dlr.getSource(), dlr.getNormalizedStatus());
         }
+    }
 
+    private void logResult(NormalizedDlr dlr, ProcessingResult r) {
         String maskedMobile = MobileMasker.mask(dlr.getMobile());
         MDC.put("source", dlr.getSource());
         MDC.put("message_id", dlr.getMessageId());
@@ -482,6 +536,313 @@ public class DlrProcessingService {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Bulk push
+    // ------------------------------------------------------------------------------------------------
+
+    /** Where the events of a bulk callback are: field (null = the document is the array), batch id, the array. */
+    private record BulkEnvelope(String field, String batchId, JsonNode events) {
+    }
+
+    /** A bulk envelope, or null when the payload is a single callback. */
+    private BulkEnvelope bulkEnvelope(JsonNode json) {
+        DlrProperties.Bulk cfg = properties.getBulk();
+        if (json.isArray()) {
+            boolean anyObject = false;
+            for (JsonNode n : json) {
+                if (n.isObject()) {
+                    anyObject = true;
+                    break;
+                }
+            }
+            return cfg.isTopLevelArrays() && anyObject ? new BulkEnvelope(null, null, json) : null;
+        }
+        if (!json.isObject()) {
+            return null;
+        }
+        for (String f : cfg.getEventFields()) {
+            JsonNode events = json.get(f);
+            if (events != null && events.isArray()) {
+                String batchId = null;
+                for (String b : cfg.getBatchIdFields()) {
+                    JsonNode v = json.get(b);
+                    if (v != null && v.isValueNode() && !v.isNull() && !v.asText().isBlank()) {
+                        batchId = v.asText();
+                        break;
+                    }
+                }
+                return new BulkEnvelope(f, batchId, events);
+            }
+        }
+        return null;
+    }
+
+    /** One event of a bulk callback while it is processed. */
+    private static final class EventWork {
+        final int index;
+        final JsonNode node;
+        final String raw;
+        String prepared;            // NORMALIZED | INVALID | UNRECOGNIZED | MALFORMED
+        NormalizedDlr dlr;
+        String sentId;
+        String baseId;
+        Integer part;
+        String recipient;
+        String source;
+        String providerStatus;
+        String statusCode;
+        String normalizedStatus;
+        String outcome;
+        String reason;
+        Long eventId;
+
+        EventWork(int index, JsonNode node, String raw) {
+            this.index = index;
+            this.node = node;
+            this.raw = raw;
+        }
+    }
+
+    /**
+     * Each event of a bulk push is interpreted on its own (an unknown or broken event never blocks its siblings) and
+     * written in chunks of dlr.bulk.chunk-size events per transaction. A chunk that fails is retried event by event,
+     * so one bad row only fails itself; when every event of a chunk fails the database is treated as unavailable
+     * and the error propagates (retryable 5xx; the captured request itself is already stored).
+     */
+    private ProcessingResult processBulk(String explicitSource, BulkEnvelope env) {
+        DlrProperties.Bulk cfg = properties.getBulk();
+        int n = env.events().size();
+        String hinted = explicitSource != null ? explicitSource : UNKNOWN_SOURCE;
+        if (n > cfg.getMaxEvents()) {
+            log.warn("Bulk DLR callback not interpreted: {} events exceed dlr.bulk.max-events={} batch_id={}",
+                    n, cfg.getMaxEvents(), env.batchId());
+            return batchResult(new BatchResult(env.batchId(), n, 0, 0, 0, 0, 0, 0, 0, true, cfg.getMaxEvents(), hinted,
+                    List.of()));
+        }
+        String body = CURRENT_BODY.get();
+        List<String> slices = body == null ? null : com.smsframework.dlr.util.JsonSlices.arrayElements(body, env.field());
+        if (slices != null && slices.size() != n) {
+            slices = null;
+        }
+        java.util.UUID captureId = CURRENT_CAPTURE.get();
+        List<EventWork> work = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            JsonNode ev = env.events().get(i);
+            EventWork w = new EventWork(i, ev, slices != null ? slices.get(i) : ev.toString());
+            prepareBulkEvent(explicitSource, w);
+            work.add(w);
+        }
+        int chunk = Math.max(1, cfg.getChunkSize());
+        for (int from = 0; from < n; from += chunk) {
+            writeChunk(work.subList(from, Math.min(n, from + chunk)), captureId, env.batchId());
+        }
+
+        int applied = 0, ignored = 0, dup = 0, rejected = 0, unknown = 0, malformed = 0, failed = 0;
+        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+        java.util.Set<String> sources = new java.util.LinkedHashSet<>();
+        for (EventWork w : work) {
+            switch (w.outcome) {
+                case "APPLIED" -> applied++;
+                case "IGNORED" -> ignored++;
+                case "DUPLICATE" -> dup++;
+                case "REJECTED" -> rejected++;
+                case "MALFORMED" -> malformed++;
+                case "ERROR" -> failed++;
+                default -> unknown++;
+            }
+            if (w.sentId != null) {
+                ids.add(w.sentId);
+            }
+            if (w.baseId != null) {
+                ids.add(w.baseId);
+            }
+            if (w.source != null && !UNKNOWN_SOURCE.equals(w.source)) {
+                sources.add(w.source);
+            }
+        }
+        String source = sources.size() == 1 ? sources.iterator().next() : sources.isEmpty() ? hinted : "MIXED";
+        BatchResult br = new BatchResult(env.batchId(), n, applied, ignored, dup, rejected, unknown, malformed, failed,
+                null, null, source, new java.util.ArrayList<>(ids));
+        log.info("Bulk DLR callback batch_id={} capture_id={} events={} applied={} ignored={} duplicate={} rejected={} "
+                        + "unrecognized={} malformed={} failed={}", env.batchId(), captureId, n, applied, ignored, dup,
+                rejected, unknown, malformed, failed);
+        return batchResult(br);
+    }
+
+    private static ProcessingResult batchResult(BatchResult br) {
+        ProcessingStatus overall = br.events() == 0 || br.interpreted() + br.rejected() == 0 ? ProcessingStatus.UNRECOGNIZED
+                : br.applied() > 0 ? ProcessingStatus.APPLIED
+                : br.interpreted() == 0 ? ProcessingStatus.REJECTED
+                : br.duplicates() == br.interpreted() ? ProcessingStatus.DUPLICATE : ProcessingStatus.IGNORED;
+        return new ProcessingResult(null, br.source(), null, overall, null, null, null, null, false, null, null, null, br);
+    }
+
+    /** Recognise + validate one event (no database work). */
+    private void prepareBulkEvent(String explicitSource, EventWork w) {
+        JsonNode ev = w.node;
+        if (!ev.isObject()) {
+            w.prepared = "MALFORMED";
+            w.reason = "event is not a JSON object (" + ev.getNodeType().name().toLowerCase() + ")";
+            return;
+        }
+        w.recipient = firstText(ev, "mobile", "msisdn", "to", "recipient", "recipient_id", "toNumber", "phone");
+        w.providerStatus = firstText(ev, "status", "Status", "message_status", "delivery_status", "dlr_status");
+        w.statusCode = firstText(ev, "code", "status_code", "statusCode", "error_code", "err");
+        Optional<DlrProviderAdapter> adapter = explicitSource == null && !sourceResolver.detectFromPayload()
+                ? Optional.empty() : adapters.find(explicitSource, ev);
+        if (adapter.isEmpty()) {
+            w.prepared = "UNRECOGNIZED";
+            w.reason = "event structure not recognised by any DLR adapter";
+            w.sentId = adapters.peekMessageId(ev);
+            w.source = explicitSource;
+            setIds(w);
+            return;
+        }
+        DlrProviderAdapter a = adapter.get();
+        w.source = a.source();
+        try {
+            NormalizedDlr dlr = a.normalize(ev);
+            w.sentId = dlr.getMessageId();
+            MessageIdParts.Parsed ids = MessageIdParts.parse(dlr.getMessageId(), properties.getMessageIdPartSeparator());
+            if (ids.hasPart()) {
+                dlr.providerMessageId(ids.original()).partNumber(ids.part()).messageId(ids.messageId());
+            }
+            w.dlr = dlr;
+            w.prepared = "NORMALIZED";
+            w.recipient = dlr.getMobile() != null ? dlr.getMobile() : w.recipient;
+            w.providerStatus = dlr.getProviderStatus();
+            w.statusCode = dlr.getStatusCode() != null ? dlr.getStatusCode() : w.statusCode;
+            w.normalizedStatus = dlr.getNormalizedStatus().name();
+            setIds(w);
+        } catch (DlrValidationException e) {
+            w.prepared = "INVALID";
+            w.reason = e.getReason();
+            w.sentId = safePeek(a, ev);
+            setIds(w);
+        }
+    }
+
+    private void setIds(EventWork w) {
+        if (w.sentId == null) {
+            return;
+        }
+        MessageIdParts.Parsed ids = MessageIdParts.parse(w.sentId, properties.getMessageIdPartSeparator());
+        w.baseId = ids.messageId();
+        w.part = ids.hasPart() ? ids.part() : null;
+    }
+
+    private static String firstText(JsonNode n, String... fields) {
+        for (String f : fields) {
+            JsonNode v = n.get(f);
+            if (v != null && v.isValueNode() && !v.isNull() && !v.asText().isBlank()) {
+                return v.asText();
+            }
+        }
+        return null;
+    }
+
+    private void writeChunk(List<EventWork> part, java.util.UUID captureId, String batchId) {
+        try {
+            tx.executeWithoutResult(s -> {
+                for (EventWork w : part) {
+                    persistBulkEvent(w, captureId);
+                }
+                saveBatchRows(part, captureId, batchId);
+            });
+        } catch (DataAccessException chunkError) {
+            log.warn("Bulk chunk of {} events failed ({}); retrying event by event", part.size(), chunkError.getMessage());
+            int dbFailures = 0;
+            DataAccessException last = chunkError;
+            for (EventWork w : part) {
+                w.outcome = null;
+                w.eventId = null;
+                try {
+                    tx.executeWithoutResult(s -> {
+                        persistBulkEvent(w, captureId);
+                        saveBatchRows(List.of(w), captureId, batchId);
+                    });
+                } catch (DataAccessException e) {
+                    dbFailures++;
+                    last = e;
+                    w.outcome = "ERROR";
+                    w.eventId = null;
+                    w.reason = "database error: " + e.getMostSpecificCause().getMessage();
+                    try {
+                        tx.executeWithoutResult(s -> saveBatchRows(List.of(w), captureId, batchId));
+                    } catch (DataAccessException ignored) {
+                        // the event stays visible in the raw request body
+                    }
+                }
+            }
+            if (dbFailures == part.size()) {
+                throw last;
+            }
+        }
+    }
+
+    /** Database work for one event (inside the caller's transaction). */
+    private void persistBulkEvent(EventWork w, java.util.UUID captureId) {
+        switch (w.prepared) {
+            case "NORMALIZED" -> {
+                metrics.received(w.dlr.getSource());
+                // one recipient of a bulk campaign ("<id>:<n>"): its outcome is judged against ITS previous status,
+                // not against the whole message's state (which the first recipient already moved)
+                NormalizedStatus recipientBefore = null;
+                if (w.dlr.getPartNumber() != null) {
+                    recipientBefore = events.findStatusEventPerPart(List.of(w.dlr.getMessageId()), List.of(w.dlr.getPartNumber()))
+                            .stream().findFirst().map(e -> NormalizedStatus.parse(e.getNormalizedStatus())).orElse(NormalizedStatus.UNKNOWN);
+                }
+                ProcessingResult r = persist(w.dlr, w.raw, w.raw, captureId);
+                recordMetrics(w.dlr, r);
+                w.outcome = r.processingStatus().name();
+                w.eventId = r.eventId();
+                w.reason = r.note();
+                if (recipientBefore != null && r.processingStatus() == ProcessingStatus.IGNORED) {
+                    DlrStateMachine.Decision d = stateMachine.evaluate(recipientBefore, w.dlr.getNormalizedStatus());
+                    if (d.outcome() == DlrStateMachine.Outcome.APPLY) {
+                        w.outcome = "APPLIED";
+                        w.reason = "recipient " + w.sentId + ": " + (recipientBefore == NormalizedStatus.UNKNOWN
+                                ? "first DLR" : recipientBefore + " -> " + w.dlr.getNormalizedStatus());
+                    } else {
+                        w.reason = "recipient " + w.sentId + ": " + d.reason();
+                    }
+                }
+            }
+            case "INVALID" -> {
+                String src = w.source == null ? UNKNOWN_SOURCE : w.source;
+                DlrEvent event = mapper.rejectedEvent(src, w.baseId, w.raw, w.reason, instanceId);
+                event.setRawBody(w.raw);
+                event.setBatchCaptureId(captureId);
+                if (w.part != null) {
+                    event.setProviderMessageId(w.sentId);
+                    event.setPartNumber(w.part);
+                }
+                w.eventId = events.insert(event);
+                metrics.received(src);
+                metrics.rejected(src);
+                w.outcome = "REJECTED";
+            }
+            default -> {
+                metrics.unrecognized(UNKNOWN_SOURCE);
+                w.outcome = w.prepared;
+            }
+        }
+    }
+
+    private void saveBatchRows(List<EventWork> part, java.util.UUID captureId, String batchId) {
+        if (batchEvents == null || captureId == null) {
+            return;
+        }
+        List<com.smsframework.dlr.capture.BatchEventRepository.Row> rows = new java.util.ArrayList<>(part.size());
+        for (EventWork w : part) {
+            rows.add(new com.smsframework.dlr.capture.BatchEventRepository.Row(captureId, batchId, w.index, w.sentId,
+                    w.baseId, w.part, w.recipient, w.source, w.providerStatus,
+                    "UNRECOGNIZED".equals(w.outcome) || "MALFORMED".equals(w.outcome) ? null : w.normalizedStatus,
+                    w.outcome, w.reason, w.eventId, w.raw, w.statusCode));
+        }
+        batchEvents.insertAll(rows);
     }
 
     /** PostgreSQL text/jsonb cannot hold NUL characters; replace them so the raw payload is always storable. */
