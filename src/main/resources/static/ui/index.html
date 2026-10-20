@@ -677,6 +677,15 @@
     const key = d.dataset.key;
     if (d.open) {
       openRaw.add(key);
+      const cid = d.dataset.capture;
+      if (cid) {                                        // bulk push: load the original body on first open
+        d.querySelector("pre").innerHTML = batchRawHtml(cid);
+        if (!batchRaw.has(cid)) loadBatchRaw(cid).then(() => {
+          const cur = [...$("feedBody").querySelectorAll("details.raw[data-capture]")].find(x => x.dataset.capture === cid);
+          if (cur && cur.open) cur.querySelector("pre").innerHTML = batchRawHtml(cid);
+        });
+        return;
+      }
       const it = feed.find(f => f.kind + ":" + f.id === key);
       d.querySelector("pre").innerHTML = it ? jsonView(it.raw_text, it.raw) : "";
     } else openRaw.delete(key);
@@ -730,7 +739,33 @@
       + `<td><b>Bulk</b> <span class="muted">· ${n0(n)} event${n === 1 ? "" : "s"}</span></td>`
       + `<td class="mono">${it.batch_id ? `<span class="muted">batch</span> ${esc(it.batch_id)}` : '<span class="muted">no batch id</span>'}</td>`
       + `<td></td><td colspan="2">${batchSummaryChips(it.batch_summary)} ${interpBadge(it.interpretation_status)}</td>`
-      + `<td><button type="button" class="copy-btn" data-open-batch="${esc(it.capture_id)}" title="Open the request and its events">Open batch</button></td></tr>`;
+      + `<td>${batchRawCell(it)} <button type="button" class="copy-btn" data-open-batch="${esc(it.capture_id)}" title="Open the request and its events">Open batch</button></td></tr>`;
+  }
+  // Raw JSON of a bulk push: the whole request body exactly as received, fetched once when first expanded or copied
+  const batchRaw = new Map();      // capture_id -> {text} | {error}
+  function batchRawCell(it) {
+    const key = it.kind + ":" + it.id, open = openRaw.has(key);
+    return `<span class="rawc"><details class="raw" data-key="${esc(key)}" data-capture="${esc(it.capture_id)}"${open ? " open" : ""}>`
+      + `<summary>JSON</summary><pre class="json mono">${open ? batchRawHtml(it.capture_id) : ""}</pre></details>`
+      + `<button type="button" class="copy-btn" data-copy-batch="${esc(it.capture_id)}" title="Copy the bulk request body exactly as received">Copy</button></span>`;
+  }
+  function batchRawHtml(cid) {
+    const r = batchRaw.get(cid);
+    if (!r) return '<span class="muted">Loading…</span>';
+    return r.error ? `<span class="err">${esc(r.error)}</span>` : jsonView(r.text);
+  }
+  async function loadBatchRaw(cid) {
+    const have = batchRaw.get(cid);
+    if (have && have.text != null) return have.text;
+    try {
+      const res = await rawResponse(cid);
+      const text = await res.text();
+      batchRaw.set(cid, { text });
+      return text;
+    } catch (e) {
+      batchRaw.set(cid, { error: /410/.test(e.message) ? "Body exceeded the size limit and was not stored" : "Could not load the request body: " + e.message });
+      return null;
+    }
   }
   document.querySelectorAll(".catF").forEach(c => c.onchange = () => renderFeed(new Set()));
   $("billingF").onchange = () => renderFeed(new Set());
@@ -740,6 +775,8 @@
   $("feedBody").onclick = (e) => {
     const ob = e.target.closest("button[data-open-batch]");
     if (ob) { showTab("incoming"); inc.sub = "events"; openCapture(ob.dataset.openBatch); return; }
+    const cb = e.target.closest("button[data-copy-batch]");
+    if (cb) { loadBatchRaw(cb.dataset.copyBatch).then(async t => flash(cb, t != null && await copyText(t), "Copy")); return; }
     const c = e.target.closest("button[data-copy-key]");
     if (c) { const it = feed.find(f => f.kind + ":" + f.id === c.dataset.copyKey); copyJson(c, it && it.raw, it && it.raw_text); return; }
     const a = e.target.closest("a.msg"); if (a) openLookup(a.dataset.id);

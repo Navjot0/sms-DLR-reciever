@@ -22,7 +22,8 @@ class DlrLiveUiIntegrationTest extends AbstractIntegrationTest {
         assertThat(ui.statusCode()).isEqualTo(200);
         assertThat(ui.body()).contains("DLR Receiver · Live").contains("/api/v1/dlr/live/feed")
                 .contains("Incoming requests").contains("/api/v1/webhooks/requests")
-                .contains("Bulk received").contains("Individual messages").contains("/api/v1/dlr/messages");
+                .contains("Bulk received").contains("Individual messages").contains("/api/v1/dlr/messages")
+                .contains("data-copy-batch").contains("loadBatchRaw");   // bulk push raw JSON in the live feed
 
         HttpResponse<String> root = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create(url("/"))).GET().build(), HttpResponse.BodyHandlers.ofString());
