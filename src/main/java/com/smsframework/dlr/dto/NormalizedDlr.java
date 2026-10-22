@@ -34,6 +34,8 @@ public class NormalizedDlr {
     private String entityId;
     private String templateId;
     private Integer units;
+    /** Set when the DLR failed validation and was kept as received (dlr.accept-invalid); not persisted as a column. */
+    private String acceptedNote;
 
     public static NormalizedDlr of(String source) {
         NormalizedDlr d = new NormalizedDlr();
@@ -43,6 +45,8 @@ public class NormalizedDlr {
 
     // Fluent setters -----------------------------------------------------
     public NormalizedDlr messageId(String v) { this.messageId = v; return this; }
+    public NormalizedDlr acceptedNote(String v) { this.acceptedNote = v; return this; }
+    public String getAcceptedNote() { return acceptedNote; }
     public NormalizedDlr providerMessageId(String v) { this.providerMessageId = v; return this; }
     public NormalizedDlr partNumber(Integer v) { this.partNumber = v; return this; }
     public NormalizedDlr externalMessageId(String v) { this.externalMessageId = v; return this; }

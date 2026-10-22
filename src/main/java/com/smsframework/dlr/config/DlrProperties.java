@@ -26,6 +26,12 @@ public class DlrProperties {
      * stored as part_number and the id as received as provider_message_id. Empty = no splitting.
      */
     private String messageIdPartSeparator = ":";
+    /**
+     * true (default): a DLR in a known format whose content fails validation (missing status, inbound message,
+     * unexpected field type ...) is still stored as received, with whatever message id / status / mobile can be
+     * read from it, instead of being REJECTED. Only a DLR without any message id cannot be stored as a DLR.
+     */
+    private boolean acceptInvalid = true;
 
     private final SourceResolution sourceResolution = new SourceResolution();
 
@@ -326,6 +332,8 @@ public class DlrProperties {
     // ------------------------------------------------------------------
 
     public String getMessageIdPartSeparator() { return messageIdPartSeparator; }
+    public boolean isAcceptInvalid() { return acceptInvalid; }
+    public void setAcceptInvalid(boolean acceptInvalid) { this.acceptInvalid = acceptInvalid; }
     public void setMessageIdPartSeparator(String messageIdPartSeparator) { this.messageIdPartSeparator = messageIdPartSeparator; }
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }

@@ -56,6 +56,7 @@ class DlrProcessingServiceTest {
     @SuppressWarnings("unchecked")
     void setUp() {
         DlrProperties props = new DlrProperties();
+        props.setAcceptInvalid(false);   // strict validation (accept-invalid is covered by AcceptAllDlrIntegrationTest)
         events = mock(DlrEventRepository.class);
         statuses = mock(DlrMessageStatusRepository.class);
         TransactionTemplate tx = mock(TransactionTemplate.class);

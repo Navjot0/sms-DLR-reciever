@@ -623,6 +623,18 @@ The integration tests send 60 messages × 3 callbacks (`SUBMITTED`, final, `SUBM
 
 ## Validation and rejected DLRs
 
+**Accept everything (default, `DLR_ACCEPT_INVALID=true`).** A DLR in a known format that fails the checks below is
+*not* rejected. It is stored as received, with whatever can be read from it: the message id (adapter first, then the
+usual field names such as `message_id`, `msgId` at any depth), status (missing or unmapped → `UNKNOWN`), mobile and
+code. It goes through idempotency and the state machine like any other DLR, `GET /api/v1/dlr/{id}` reports it as
+received (`record_state: PARSED`), and its `processing_note` ends with `accepted without validation: <reason>`.
+Bulk events are counted as interpreted, not invalid. The only thing that cannot become a DLR is an event with no
+message id at all; it is kept in the capture and the Individual messages view as `UNRECOGNIZED`.
+
+Set `DLR_ACCEPT_INVALID=false` for strict validation, which works as described in the rest of this section.
+Callbacks rejected before you switched it on can be applied with
+`POST /api/v1/dlr/events/rejected/reprocess` (see below).
+
 | Provider | Required | Optional |
 |---|---|---|
 | Default SMS | `message_id`, `mobile`, `status` (inside `payload` for the wrapped form) | `entity_id`, `template_id`, `correlation_id`, … |

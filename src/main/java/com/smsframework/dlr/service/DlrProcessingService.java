@@ -280,7 +280,14 @@ public class DlrProcessingService {
             dlr = adapter.normalize(json);
         } catch (DlrValidationException e) {
             String peeked = safePeek(adapter, json);
-            return reject(adapter.source(), peeked, rawForStorage, e.getReason(), false);
+            if (!properties.isAcceptInvalid()) {
+                return reject(adapter.source(), peeked, rawForStorage, e.getReason(), false);
+            }
+            dlr = acceptAsReceived(adapter, json, e.getReason());
+            if (dlr == null) {
+                return unrecognized(adapter.source(), null, UNRECOGNIZED_UNKNOWN,
+                        "no message id in the DLR (" + e.getReason() + ")");
+            }
         }
 
         // 4a. Multipart ids: "<message_id>:<part>" -> message_id + part_number (correlates with billing DLRs)
@@ -291,7 +298,8 @@ public class DlrProcessingService {
 
         // 5. Idempotency + state machine (single DB transaction) --------------------------------------
         metrics.received(dlr.getSource());
-        ProcessingResult result = tx.execute(status -> persist(dlr, rawForStorage));
+        NormalizedDlr accepted = dlr;
+        ProcessingResult result = tx.execute(status -> markAccepted(accepted, persist(accepted, rawForStorage)));
         recordMetricsAndLog(dlr, result);
         return result;
     }
@@ -383,9 +391,15 @@ public class DlrProcessingService {
             String raw = env.toString();
             ProcessingResult r;
             NormalizedDlr dlr = null;
+            DlrValidationException invalid = null;
             try {
                 dlr = adapter.normalize(env);
             } catch (DlrValidationException e) {
+                invalid = e;
+                dlr = properties.isAcceptInvalid() ? acceptAsReceived(adapter, env, rejectPrefix + e.getReason()) : null;
+            }
+            if (dlr == null) {
+                DlrValidationException e = invalid;
                 r = reject(source, safePeek(adapter, env), raw, rejectPrefix + e.getReason(), false);
                 rejected++;
                 items.add(new MetaWebhookResult.Item(r.eventId(), r.messageId(), null, null,
@@ -394,7 +408,7 @@ public class DlrProcessingService {
             }
             NormalizedDlr d = dlr;
             metrics.received(source);
-            r = tx.execute(status -> persist(d, raw));
+            r = tx.execute(status -> markAccepted(d, persist(d, raw)));
             recordMetricsAndLog(d, r);
             switch (r.processingStatus()) {
                 case APPLIED -> applied++;
@@ -717,11 +731,99 @@ public class DlrProcessingService {
             w.normalizedStatus = dlr.getNormalizedStatus().name();
             setIds(w);
         } catch (DlrValidationException e) {
-            w.prepared = "INVALID";
-            w.reason = e.getReason();
-            w.sentId = safePeek(a, ev);
-            setIds(w);
+            NormalizedDlr dlr = properties.isAcceptInvalid() ? acceptAsReceived(a, ev, e.getReason()) : null;
+            if (dlr != null) {
+                w.sentId = dlr.getMessageId();
+                MessageIdParts.Parsed ids = MessageIdParts.parse(dlr.getMessageId(), properties.getMessageIdPartSeparator());
+                if (ids.hasPart()) {
+                    dlr.providerMessageId(ids.original()).partNumber(ids.part()).messageId(ids.messageId());
+                }
+                w.dlr = dlr;
+                w.prepared = "NORMALIZED";
+                w.reason = dlr.getAcceptedNote();
+                w.recipient = dlr.getMobile() != null ? dlr.getMobile() : w.recipient;
+                w.providerStatus = dlr.getProviderStatus();
+                w.statusCode = dlr.getStatusCode() != null ? dlr.getStatusCode() : w.statusCode;
+                w.normalizedStatus = dlr.getNormalizedStatus().name();
+                setIds(w);
+            } else if (properties.isAcceptInvalid()) {
+                w.prepared = "UNRECOGNIZED";
+                w.reason = "no message id in the event (" + e.getReason() + ")";
+                setIds(w);
+            } else {
+                w.prepared = "INVALID";
+                w.reason = e.getReason();
+                w.sentId = safePeek(a, ev);
+                setIds(w);
+            }
         }
+    }
+
+    /**
+     * dlr.accept-invalid: a DLR in a known format that failed validation, kept as received. Message id, status,
+     * mobile and code are read best effort (adapter first, then the usual field names at any depth); a missing or
+     * unmapped status becomes UNKNOWN. Null when no message id can be found (it cannot be stored as a DLR).
+     */
+    private NormalizedDlr acceptAsReceived(DlrProviderAdapter adapter, JsonNode ev, String reason) {
+        com.smsframework.dlr.capture.GenericFieldExtractor.Extracted x = extractor == null
+                ? com.smsframework.dlr.capture.GenericFieldExtractor.Extracted.NONE : extractor.extract(ev.toString(), "application/json");
+        String id = firstNonBlank(safePeek(adapter, ev), x.messageId(),
+                firstText(ev, "message_id", "messageId", "msg_id", "msgId", "external_message_id", "wamid"));
+        if (id == null || ev == null || !ev.isContainerNode()) {
+            return null;
+        }
+        String status = firstNonBlank(x.status(), firstText(ev, "status", "Status", "event_type", "eventType", "event"));
+        String mobile = firstNonBlank(x.recipient(), firstText(ev, "mobile", "msisdn", "to", "recipient", "phone", "number"));
+        String code = firstText(ev, "code", "status_code", "statusCode", "error_code", "errorCode", "err");
+        String src = adapter.source();
+        return NormalizedDlr.of(src)
+                .messageId(id.length() > 255 ? id.substring(0, 255) : id)
+                .mobile(mobile)
+                .providerStatus(status)
+                .normalizedStatus(statusNormalizer().normalize(src, status))
+                .statusCode(code)
+                .errorCode(code)
+                .acceptedNote("accepted without validation: " + reason);
+    }
+
+    /** Adds the "accepted without validation" reason to the stored event's note. */
+    private ProcessingResult markAccepted(NormalizedDlr dlr, ProcessingResult r) {
+        if (dlr.getAcceptedNote() == null || r == null || r.eventId() == null) {
+            return r;
+        }
+        String note = (r.note() == null ? "" : r.note() + "; ") + dlr.getAcceptedNote();
+        events.updateProcessing(r.eventId(), r.processingStatus(), note.length() > 1000 ? note.substring(0, 1000) : note);
+        return new ProcessingResult(r.eventId(), r.source(), r.messageId(), r.processingStatus(), r.normalizedStatus(),
+                r.currentStatus(), r.rejectionReason(), note, r.payloadTooLarge(), r.billing(), r.click(), r.meta(), r.batch());
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    private com.smsframework.dlr.capture.GenericFieldExtractor extractor;
+    private StatusNormalizer statusNormalizer;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setStatusNormalizer(StatusNormalizer statusNormalizer) {
+        this.statusNormalizer = statusNormalizer;
+    }
+
+    private StatusNormalizer statusNormalizer() {
+        if (statusNormalizer == null) {
+            statusNormalizer = new StatusNormalizer(properties);
+        }
+        return statusNormalizer;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFieldExtractor(com.smsframework.dlr.capture.GenericFieldExtractor extractor) {
+        this.extractor = extractor;
     }
 
     private void setIds(EventWork w) {
@@ -794,7 +896,7 @@ public class DlrProcessingService {
                     recipientBefore = events.findStatusEventPerPart(List.of(w.dlr.getMessageId()), List.of(w.dlr.getPartNumber()))
                             .stream().findFirst().map(e -> NormalizedStatus.parse(e.getNormalizedStatus())).orElse(NormalizedStatus.UNKNOWN);
                 }
-                ProcessingResult r = persist(w.dlr, w.raw, w.raw, captureId);
+                ProcessingResult r = markAccepted(w.dlr, persist(w.dlr, w.raw, w.raw, captureId));
                 recordMetrics(w.dlr, r);
                 w.outcome = r.processingStatus().name();
                 w.eventId = r.eventId();
@@ -807,6 +909,9 @@ public class DlrProcessingService {
                                 ? "first DLR" : recipientBefore + " -> " + w.dlr.getNormalizedStatus());
                     } else {
                         w.reason = "recipient " + w.sentId + ": " + d.reason();
+                    }
+                    if (w.dlr.getAcceptedNote() != null) {
+                        w.reason += "; " + w.dlr.getAcceptedNote();
                     }
                 }
             }

@@ -79,6 +79,9 @@ dlr:
   # Multipart SMS: status and billing DLRs may carry "<message_id>:<part>" (e.g. "c9b2...:1").
   # Stored as message_id "c9b2..." + part_number 1 so both DLRs correlate. Empty = no splitting.
   message-id-part-separator: ":"
+  # Accept every DLR: a known-format DLR that fails validation is stored as received (status UNKNOWN when it
+  # has none) instead of REJECTED. false = strict validation (invalid DLRs are stored as REJECTED).
+  accept-invalid: ${DLR_ACCEPT_INVALID:true}
 
   source-resolution:
     headers: [X-DLR-Source, X-DLR-Provider, source, provider]

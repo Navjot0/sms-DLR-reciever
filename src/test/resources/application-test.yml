@@ -6,3 +6,6 @@ spring:
   datasource:
     hikari:
       maximum-pool-size: 30
+# Most tests check strict validation (REJECTED); AcceptAllDlrIntegrationTest covers the default accept-invalid=true.
+dlr:
+  accept-invalid: false
